@@ -29,9 +29,26 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -color
 
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+
   # The ruleset requires only this job, so adding or renaming a job above never touches repository settings.
   ci-ok:
-    needs: [check, actionlint]
+    needs: [check, actionlint, go]
     if: always()
     runs-on: ubuntu-latest
     steps:
