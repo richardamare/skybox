@@ -14,7 +14,7 @@ A link under Linked environments needs an address the Mac reaches without the T3
 
 In the admin console of the tailnet `richardamare.github`:
 
-1. In DNS, turn on MagicDNS and HTTPS Certificates, which Tailscale Serve needs.
+1. In DNS, turn on MagicDNS and HTTPS Certificates, and turn on Tailscale Serve for the tailnet. While Serve is off, `tailscale serve` on a sandbox waits on a prompt with the URL that turns it on, so T3 Code's attempt times out and `skybox up` reports that T3 Code does not answer.
 2. In Access controls, replace the default allow-all grant with this policy. Keep any other grant only if its `src` is neither `*` nor `tag:skybox`.
 
    ```jsonc
