@@ -48,6 +48,11 @@ LABELS = {
     "tech-debt": ("c2e0c6", "Refactor, cleanup or tooling"),
     "dependencies": ("0366d6", "Dependency update"),
     "blocked": ("e99695", "Waiting on a decision or an outside dependency"),
+    "needs-triage": ("fbca04", "The maintainer has not evaluated it yet"),
+    "needs-info": ("d4c5f9", "Waiting on the reporter for more information"),
+    "ready-for-agent": ("1d76db", "Fully specified, ready for an agent to pick up"),
+    "ready-for-human": ("5319e7", "Needs a person to implement it"),
+    "wontfix": ("ffffff", "Will not be actioned"),
 }
 
 # Actor 5 is the repository admin role, which apply_admins leaves to the person running this script.
