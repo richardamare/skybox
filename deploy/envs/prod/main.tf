@@ -283,6 +283,12 @@ resource "azurerm_container_app_environment" "main" {
   logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   tags                       = local.tags
+
+  # Azure gives every new environment this profile, so a config without it never stops planning to remove it.
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }
 }
 
 resource "azurerm_container_app_job" "control_plane" {
@@ -290,6 +296,7 @@ resource "azurerm_container_app_job" "control_plane" {
   resource_group_name          = azurerm_resource_group.main.name
   location                     = local.control_plane_location
   container_app_environment_id = azurerm_container_app_environment.main.id
+  workload_profile_name        = "Consumption"
   # Shorter than the schedule's interval, so two runs never overlap.
   replica_timeout_in_seconds = 840
   replica_retry_limit        = 0
