@@ -116,7 +116,11 @@ func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	if err != nil {
 		return nil, err
 	}
+	url := "https://" + device.Name
+	if err := d.waitForServe(ctx, cmd, name, url); err != nil {
+		return nil, err
+	}
 	res := newSandboxResult(created)
-	res.TailnetURL = "https://" + device.Name
+	res.TailnetURL = url
 	return res, nil
 }

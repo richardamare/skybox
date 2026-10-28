@@ -127,6 +127,17 @@ func TestUpFailsWhenTheSandboxNeverJoinsTheTailnet(t *testing.T) {
 	}
 }
 
+func TestUpFailsWhenT3CodeNeverAnswersAtTheTailnetAddress(t *testing.T) {
+	d := testDeps(t, newFakeProvider())
+	d.answers = func(context.Context, string) bool { return false }
+	got := runCLI(t, d, "up", "api-fix")
+
+	if got.code != 1 || !strings.Contains(got.stderr, "does not answer at https://") ||
+		!strings.Contains(got.stderr, "Tailscale Serve") || !strings.Contains(got.stderr, "skybox down api-fix") {
+		t.Fatalf("up = %d, stderr %q; want exit 1 saying T3 Code never answered and naming Tailscale Serve", got.code, got.stderr)
+	}
+}
+
 func TestSleepAndWakeKeepTheSandboxsDevice(t *testing.T) {
 	p := newFakeProvider()
 	d := testDeps(t, p)

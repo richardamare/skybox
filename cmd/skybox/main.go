@@ -37,6 +37,8 @@ type deps struct {
 	tailnet  func(ctx context.Context) (tailnet, error)
 	// connect hands the SSH connection to cloudflared, which carries it through Cloudflare Access.
 	connect func(hostname string) error
+	// answers reports whether T3 Code responds at a sandbox's tailnet address.
+	answers func(ctx context.Context, url string) bool
 
 	sshConfig  string
 	knownHosts string
@@ -44,7 +46,8 @@ type deps struct {
 	executable string
 	// tunnelTimeout bounds how long up and wake wait for the sandbox's tunnel to connect.
 	tunnelTimeout time.Duration
-	// joinTimeout bounds how long up waits, once the tunnel is connected, for the sandbox's device on the tailnet.
+	// joinTimeout bounds each of up's waits once the tunnel is connected: for the sandbox's device on the tailnet, then
+	// for T3 Code to answer at its tailnet address.
 	joinTimeout  time.Duration
 	pollInterval time.Duration
 }
@@ -92,6 +95,7 @@ func defaultDeps() deps {
 			return tailscale.New(creds), nil
 		},
 		connect:       execCloudflared,
+		answers:       answersHTTP,
 		sshConfig:     filepath.Join(home, ".ssh", "config"),
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
 		executable:    executable,

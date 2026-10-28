@@ -224,6 +224,7 @@ func testDeps(t *testing.T, p *fakeProvider) deps {
 			t.Fatal("proxy connected")
 			return nil
 		},
+		answers:       func(context.Context, string) bool { return true },
 		sshConfig:     filepath.Join(home, ".ssh", "config"),
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
 		executable:    "/usr/local/bin/skybox",
