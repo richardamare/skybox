@@ -46,9 +46,40 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.17"
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive deploy
+      - name: validate and test
+        run: |
+          for dir in deploy/envs/prod deploy/modules/network; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+            terraform -chdir="$dir" test
+          done
+      - run: shellcheck deploy/tests/*.sh
+
+  # Only the prod environment, which admits master alone, may sign in to Azure. This job runs outside it.
+  azure-sign-in:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: deploy/tests/sign-in-outside-prod-fails.sh
+
   # The ruleset requires only this job, so adding or renaming a job above never touches repository settings.
   ci-ok:
-    needs: [check, actionlint, go]
+    needs: [check, actionlint, go, terraform, azure-sign-in]
     if: always()
     runs-on: ubuntu-latest
     steps:
