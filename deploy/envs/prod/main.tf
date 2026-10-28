@@ -166,3 +166,30 @@ resource "cloudflare_zone_setting" "websockets" {
   setting_id = "websockets"
   value      = "on"
 }
+
+# Every sandbox's SSH hostname, <name>-sbx.<zone>, sits behind this one application, so only the owner's Access
+# identity reaches a sandbox's tunnel. The hostnames stay one level below the zone, where Universal SSL covers them.
+resource "cloudflare_zero_trust_access_policy" "sandbox_owner" {
+  account_id       = var.cloudflare_account_id
+  name             = "skybox sandbox owner"
+  decision         = "allow"
+  session_duration = "24h"
+  include = [{
+    email = { email = var.access_email }
+  }]
+}
+
+resource "cloudflare_zero_trust_access_application" "sandboxes" {
+  account_id                = var.cloudflare_account_id
+  name                      = "skybox sandboxes"
+  type                      = "self_hosted"
+  domain                    = "*-sbx.${var.cloudflare_zone}"
+  destinations              = [{ type = "public", uri = "*-sbx.${var.cloudflare_zone}" }]
+  session_duration          = "24h"
+  app_launcher_visible      = false
+  auto_redirect_to_identity = false
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.sandbox_owner.id
+    precedence = 1
+  }]
+}

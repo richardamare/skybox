@@ -6,6 +6,9 @@ variables {
   cloudflare_zone_id      = "zone"
   cloudflare_api_token    = "cloudflare-token"
   claude_code_oauth_token = "claude-token"
+  cloudflare_account_id   = "account"
+  cloudflare_zone         = "example.com"
+  access_email            = "owner@example.com"
 }
 
 run "only_the_prod_environment_can_sign_in" {
@@ -48,5 +51,24 @@ run "every_taggable_resource_carries_the_foundation_tag" {
       ] : tags["skybox:component"] == "foundation"
     ])
     error_message = "A resource lacks the skybox:component=foundation tag."
+  }
+}
+
+run "only_the_owner_reaches_a_sandbox_hostname" {
+  command = plan
+
+  assert {
+    condition     = cloudflare_zero_trust_access_application.sandboxes.domain == "*-sbx.example.com"
+    error_message = "The Access application does not cover every sandbox hostname."
+  }
+
+  assert {
+    condition     = cloudflare_zero_trust_access_policy.sandbox_owner.decision == "allow" && length(cloudflare_zero_trust_access_policy.sandbox_owner.include) == 1
+    error_message = "The Access policy admits someone besides the owner."
+  }
+
+  assert {
+    condition     = alltrue([for rule in cloudflare_zero_trust_access_policy.sandbox_owner.include : rule.email.email == var.access_email])
+    error_message = "The Access policy does not admit the owner's email."
   }
 }
