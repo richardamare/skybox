@@ -10,7 +10,7 @@ import (
 func TestSleepWakeAndDownFailForAMissingSandbox(t *testing.T) {
 	for _, command := range []string{"sleep", "wake", "down"} {
 		t.Run(command, func(t *testing.T) {
-			got := runCLI(t, testDeps(newFakeProvider()), command, "api-fix")
+			got := runCLI(t, testDeps(t, newFakeProvider()), command, "api-fix")
 
 			if got.code != 1 || !strings.Contains(got.stderr, "no sandbox named api-fix") {
 				t.Fatalf("%s api-fix = %d, stderr %q; want exit 1 naming the missing sandbox", command, got.code, got.stderr)
@@ -21,7 +21,7 @@ func TestSleepWakeAndDownFailForAMissingSandbox(t *testing.T) {
 
 func TestSleepThenWake(t *testing.T) {
 	p := newFakeProvider(sandbox.Sandbox{Name: "api-fix", Size: sandbox.Standard, State: sandbox.Running})
-	d := testDeps(p)
+	d := testDeps(t, p)
 
 	if got := runCLI(t, d, "sleep", "api-fix"); got.code != 0 || p.sandboxes["api-fix"].State != sandbox.Asleep {
 		t.Fatalf("sleep = %d, state %s; want asleep", got.code, p.sandboxes["api-fix"].State)
@@ -33,7 +33,7 @@ func TestSleepThenWake(t *testing.T) {
 
 func TestDownDeletesTheSandbox(t *testing.T) {
 	p := newFakeProvider(sandbox.Sandbox{Name: "api-fix", Size: sandbox.Standard, State: sandbox.Running})
-	got := runCLI(t, testDeps(p), "down", "api-fix")
+	got := runCLI(t, testDeps(t, p), "down", "api-fix")
 
 	if _, ok := p.sandboxes["api-fix"]; got.code != 0 || ok {
 		t.Fatalf("down = %d, still present %v; want it deleted", got.code, ok)
@@ -46,7 +46,7 @@ func TestLsShowsEachSandboxWithSizeAndState(t *testing.T) {
 		sandbox.Sandbox{Name: "api-fix", Size: sandbox.Standard, MachineType: "Standard_D4as_v7", State: sandbox.Running},
 		sandbox.Sandbox{Name: "broken", Size: sandbox.Large, MachineType: "Standard_D8as_v7", State: sandbox.Failed},
 	)
-	got := runCLI(t, testDeps(p), "ls")
+	got := runCLI(t, testDeps(t, p), "ls")
 
 	lines := strings.Split(strings.TrimSpace(got.stdout), "\n")
 	want := [][]string{
@@ -67,7 +67,7 @@ func TestLsShowsEachSandboxWithSizeAndState(t *testing.T) {
 
 func TestLsJSONListsSandboxes(t *testing.T) {
 	p := newFakeProvider(sandbox.Sandbox{Name: "api-fix", Size: sandbox.Standard, MachineType: "Standard_D4as_v7", State: sandbox.Asleep})
-	got := runCLI(t, testDeps(p), "ls", "--json")
+	got := runCLI(t, testDeps(t, p), "ls", "--json")
 
 	var doc listResult
 	decodeOne(t, got.stdout, &doc)
@@ -77,7 +77,7 @@ func TestLsJSONListsSandboxes(t *testing.T) {
 }
 
 func TestLsJSONWithNoSandboxesIsAnEmptyList(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "ls", "--json")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "ls", "--json")
 
 	if !strings.Contains(got.stdout, `"sandboxes": []`) {
 		t.Fatalf("ls --json = %q; want an empty sandboxes list", got.stdout)

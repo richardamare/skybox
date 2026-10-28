@@ -11,7 +11,7 @@ import (
 )
 
 func TestVersionFlagPrintsPackageJSONVersion(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "--version")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "--version")
 
 	want := "skybox " + packageVersion(t) + "\n"
 	if got.code != 0 || got.stdout != want {
@@ -20,7 +20,7 @@ func TestVersionFlagPrintsPackageJSONVersion(t *testing.T) {
 }
 
 func TestNoCommandPrintsUsageAndFails(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()))
+	got := runCLI(t, testDeps(t, newFakeProvider()))
 
 	if got.code != 2 || got.stdout != "" || !strings.Contains(got.stderr, "--version") {
 		t.Fatalf("no args = %d, stdout %q, stderr %q; want exit 2 and usage naming --version", got.code, got.stdout, got.stderr)
@@ -28,7 +28,7 @@ func TestNoCommandPrintsUsageAndFails(t *testing.T) {
 }
 
 func TestUnknownFlagFails(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "--nope")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "--nope")
 
 	if got.code != 2 || got.stdout != "" {
 		t.Fatalf("--nope = %d, stdout %q; want exit 2 and no stdout", got.code, got.stdout)
@@ -36,7 +36,7 @@ func TestUnknownFlagFails(t *testing.T) {
 }
 
 func TestUnknownCommandFails(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "start", "api-fix")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "start", "api-fix")
 
 	if got.code != 2 || !strings.Contains(got.stderr, `unknown command "start"`) {
 		t.Fatalf("start = %d, stderr %q; want exit 2 naming the unknown command", got.code, got.stderr)
@@ -54,7 +54,7 @@ func TestEveryCommandPrintsOneJSONDocument(t *testing.T) {
 		{"down", "typo", "--json"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			got := runCLI(t, testDeps(newFakeProvider(running)), args...)
+			got := runCLI(t, testDeps(t, newFakeProvider(running)), args...)
 			var doc map[string]any
 			decodeOne(t, got.stdout, &doc)
 		})
@@ -62,7 +62,7 @@ func TestEveryCommandPrintsOneJSONDocument(t *testing.T) {
 }
 
 func TestErrorWithJSONIsADocumentOnStdout(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "sleep", "typo", "--json")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "sleep", "typo", "--json")
 
 	var doc struct{ Error string }
 	decodeOne(t, got.stdout, &doc)
@@ -72,7 +72,7 @@ func TestErrorWithJSONIsADocumentOnStdout(t *testing.T) {
 }
 
 func TestInvalidNameFailsBeforeReachingTheCloud(t *testing.T) {
-	d := testDeps(newFakeProvider())
+	d := testDeps(t, newFakeProvider())
 	d.provider = func(context.Context) (sandbox.Provider, error) {
 		t.Fatal("the provider was built for an invalid name")
 		return nil, nil
