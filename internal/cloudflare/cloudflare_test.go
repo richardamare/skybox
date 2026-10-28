@@ -16,8 +16,8 @@ import (
 )
 
 type call struct {
-	method, path string
-	body         map[string]any
+	method, path, query string
+	body                map[string]any
 }
 
 // fakeAPI answers each "METHOD /path" with a status and a result, and records every call.
@@ -27,7 +27,7 @@ func fakeAPI(t *testing.T, answers map[string]func() (int, any)) (*Client, *[]ca
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		calls = append(calls, call{r.Method, r.URL.Path, body})
+		calls = append(calls, call{r.Method, r.URL.Path, r.URL.RawQuery, body})
 		if r.Header.Get("Authorization") != "Bearer token" {
 			t.Errorf("%s %s sent no bearer token", r.Method, r.URL.Path)
 		}
@@ -229,5 +229,55 @@ func TestDeleteTunnelDropsConnectionsFirstAndIgnoresAGoneTunnel(t *testing.T) {
 	}
 	if err := c.DeleteTunnel(t.Context(), "gone"); err != nil {
 		t.Fatalf("DeleteTunnel(gone) = %v; want nil", err)
+	}
+}
+
+func TestListTunnelsReadsEveryPageOfLiveTunnels(t *testing.T) {
+	var pages []string
+	c, calls := fakeAPI(t, map[string]func() (int, any){
+		"GET /accounts/acc/cfd_tunnel": func() (int, any) {
+			pages = append(pages, "")
+			if len(pages) == 1 {
+				full := make([]map[string]string, pageSize)
+				for i := range full {
+					full[i] = map[string]string{"id": "t", "name": "skybox-a", "created_at": "2026-10-28T10:00:00Z"}
+				}
+				return 200, full
+			}
+			return 200, []map[string]string{{"id": "last", "name": "skybox-b", "created_at": "2026-10-28T11:00:00Z"}}
+		},
+	})
+
+	tunnels, err := c.ListTunnels(t.Context())
+
+	if err != nil || len(tunnels) != pageSize+1 || tunnels[pageSize].ID != "last" {
+		t.Fatalf("ListTunnels = %d tunnels, %v; want %d", len(tunnels), err, pageSize+1)
+	}
+	if len(*calls) != 2 || (*calls)[0].query != "is_deleted=false&page=1&per_page=1000" {
+		t.Fatalf("calls = %+v; want two pages of live tunnels", *calls)
+	}
+}
+
+func TestListCNAMERecordsNamesTheSandboxInEachComment(t *testing.T) {
+	c, calls := fakeAPI(t, map[string]func() (int, any){
+		"GET /zones/zone/dns_records": ok([]map[string]any{
+			{"id": "1", "type": "CNAME", "name": "a-sbx.example.com", "comment": "skybox:sandbox=a", "created_on": "2026-10-28T10:00:00Z"},
+			{"id": "2", "type": "CNAME", "name": "www.example.com", "comment": nil},
+		}),
+	})
+
+	records, err := c.ListCNAMERecords(t.Context())
+
+	if err != nil || len(records) != 2 {
+		t.Fatalf("ListCNAMERecords = %+v, %v", records, err)
+	}
+	if name, ok := records[0].Sandbox(); !ok || name != "a" {
+		t.Errorf("record 1 belongs to %q, %v; want a", name, ok)
+	}
+	if _, ok := records[1].Sandbox(); ok {
+		t.Error("a record without a skybox comment belongs to a sandbox")
+	}
+	if (*calls)[0].query != "page=1&per_page=1000&type=CNAME" {
+		t.Errorf("query = %q; want CNAME records only", (*calls)[0].query)
 	}
 }
