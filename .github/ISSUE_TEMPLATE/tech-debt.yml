@@ -1,0 +1,27 @@
+name: Tech debt
+description: Refactor, cleanup or tooling
+title: "refactor: "
+labels: [tech-debt]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: Current state
+      description: What the code looks like now and what it costs.
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired state
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Usually behaviour unchanged, tests green, and the named problem gone.
+      value: |
+        - [ ]
+    validations:
+      required: true

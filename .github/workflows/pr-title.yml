@@ -1,0 +1,33 @@
+name: pr-title
+
+# The squash commit takes its subject from the PR title, so the title is checked against the same commitlint config
+# as local commits.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/pnpm-install
+      # Dependabot capitalises "Bump" with no setting to stop it. A GITHUB_TOKEN edit starts no new run,
+      # so this run lints the corrected title.
+      - env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title=$TITLE
+          if [ "$AUTHOR" = "dependabot[bot]" ]; then
+            title=$(sed -E 's/^([a-z]+(\([^)]*\))?: )Bump /\1bump /' <<<"$TITLE")
+            if [ "$title" != "$TITLE" ]; then gh pr edit "$PR_URL" --title "$title"; fi
+          fi
+          printf '%s\n' "$title" > "$RUNNER_TEMP/title"
+      - run: pnpm exec commitlint < "$RUNNER_TEMP/title"

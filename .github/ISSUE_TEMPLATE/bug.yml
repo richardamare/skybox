@@ -1,0 +1,36 @@
+name: Bug
+description: Something is broken
+title: "fix: "
+labels: [bug]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: Include error messages, the trace id of a 5xx problem, or a screenshot.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Each item checkable by a test, a command or an observation in the app.
+      value: |
+        - [ ]
+    validations:
+      required: true

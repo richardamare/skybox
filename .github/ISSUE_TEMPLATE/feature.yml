@@ -1,0 +1,30 @@
+name: Feature
+description: A new capability
+title: "feat: "
+labels: [feature]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What problem it solves, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Each item checkable by a test, a command or an observation in the app.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Approach
+      description: A short design, or a link to the decision behind it.
+  - type: textarea
+    id: open
+    attributes:
+      label: Open questions

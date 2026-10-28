@@ -1,0 +1,15 @@
+node_modules
+
+/skybox
+dist
+*.test
+coverage.out
+
+.env
+.env.local
+
+.idea
+.DS_Store
+
+.devbox/
+.private/

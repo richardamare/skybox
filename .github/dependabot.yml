@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Prague
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      tooling:
+        patterns: ["@commitlint/*", "lefthook", "oxfmt"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Prague
+    commit-message:
+      prefix: ci
+    labels: [dependencies]
