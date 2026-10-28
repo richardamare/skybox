@@ -51,3 +51,11 @@ _Avoid_: Destroy, remove, teardown
 **Control plane**:
 The scheduled job that puts idle sandboxes to sleep and deletes stale sandboxes and leftover resources.
 _Avoid_: Reaper, janitor, scheduler
+
+**Idle**:
+A running sandbox where no T3 Code thread has run for an hour, counted from its latest run or its wake, whichever came later. Its CPU does not count.
+_Avoid_: Inactive, unused
+
+**Leftover**:
+A resource with a skybox mark that outlived its sandbox: a disk, NIC, public IP or resource group with a `skybox:` tag, a `skybox-<name>` tunnel, or a DNS record whose comment names the sandbox. The control plane deletes it once it is older than an hour.
+_Avoid_: Orphan, stale resource, garbage
