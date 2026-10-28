@@ -73,7 +73,9 @@ type Spec struct {
 	Name    string
 	Size    Size
 	SSHKeys []string
-	Labels  map[string]string
+	// TunnelToken lets cloudflared on the sandbox run its Cloudflare tunnel. It is the only way in.
+	TunnelToken string
+	Labels      map[string]string
 }
 
 // Provider creates, sleeps, wakes and deletes sandboxes in one cloud. The cloud is the only store of a sandbox's

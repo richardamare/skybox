@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/richardamare/skybox/internal/cloudflare"
 	"github.com/richardamare/skybox/internal/sandbox"
 )
 
@@ -13,6 +17,7 @@ import (
 type fakeProvider struct {
 	sandboxes map[string]sandbox.Sandbox
 	capacity  error
+	createErr error
 	created   []sandbox.Spec
 }
 
@@ -50,6 +55,9 @@ func (p *fakeProvider) CheckCapacity(context.Context, sandbox.Size) error { retu
 
 func (p *fakeProvider) Create(_ context.Context, spec sandbox.Spec) (sandbox.Sandbox, error) {
 	p.created = append(p.created, spec)
+	if p.createErr != nil {
+		return sandbox.Sandbox{}, p.createErr
+	}
 	s := sandbox.Sandbox{Name: spec.Name, Size: spec.Size, MachineType: fakeMachines[spec.Size], State: sandbox.Running, Labels: spec.Labels}
 	p.sandboxes[spec.Name] = s
 	return s, nil
@@ -81,11 +89,85 @@ func (p *fakeProvider) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
-func testDeps(p *fakeProvider) deps {
+// fakeTunnels keeps tunnels and DNS records in memory. A tunnel turns healthy after healthyAfter checks.
+type fakeTunnels struct {
+	tunnels      map[string]bool
+	records      map[string]string
+	createErr    error
+	healthyAfter int
+	checks       int
+}
+
+func newFakeTunnels() *fakeTunnels {
+	return &fakeTunnels{tunnels: map[string]bool{}, records: map[string]string{}}
+}
+
+func (f *fakeTunnels) Hostname(name string) string { return name + "-sbx.example.com" }
+
+func (f *fakeTunnels) CreateTunnel(_ context.Context, name string) (cloudflare.Tunnel, error) {
+	if f.createErr != nil {
+		return cloudflare.Tunnel{}, f.createErr
+	}
+	id := "tunnel-" + name
+	f.tunnels[id] = true
+	return cloudflare.Tunnel{ID: id, Token: "token-" + name}, nil
+}
+
+func (f *fakeTunnels) RouteSSH(context.Context, string, string) error { return nil }
+
+func (f *fakeTunnels) CreateDNSRecord(_ context.Context, _, hostname, _ string) (string, error) {
+	id := "record-" + hostname
+	f.records[id] = hostname
+	return id, nil
+}
+
+func (f *fakeTunnels) TunnelHealthy(_ context.Context, id string) (bool, error) {
+	if !f.tunnels[id] {
+		return false, errors.New("no such tunnel")
+	}
+	f.checks++
+	return f.checks > f.healthyAfter, nil
+}
+
+func (f *fakeTunnels) DeleteDNSRecord(_ context.Context, id string) error {
+	delete(f.records, id)
+	return nil
+}
+
+func (f *fakeTunnels) DeleteTunnel(_ context.Context, id string) error {
+	delete(f.tunnels, id)
+	return nil
+}
+
+// testDeps runs every command against fakes, with ~/.ssh in a temporary directory.
+func testDeps(t *testing.T, p *fakeProvider) deps {
+	t.Helper()
+	cf := newFakeTunnels()
+	home := t.TempDir()
 	return deps{
 		provider: func(context.Context) (sandbox.Provider, error) { return p, nil },
 		sshKeys: func(context.Context) ([]string, error) {
 			return []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake test"}, nil
+		},
+		tunnels: func(context.Context) (tunnels, error) { return cf, nil },
+		connect: func(string) error {
+			t.Fatal("proxy connected")
+			return nil
+		},
+		sshConfig:     filepath.Join(home, ".ssh", "config"),
+		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
+		executable:    "/usr/local/bin/skybox",
+		tunnelTimeout: time.Second,
+		pollInterval:  time.Millisecond,
+	}
+}
+
+func runningSandbox(name string) sandbox.Sandbox {
+	return sandbox.Sandbox{
+		Name: name, Size: sandbox.Standard, MachineType: "Standard_D4as_v7", State: sandbox.Running,
+		Labels: map[string]string{
+			labelTunnelID: "tunnel-skybox-" + name, labelDNSRecord: "record-" + name + "-sbx.example.com",
+			labelHostname: name + "-sbx.example.com",
 		},
 	}
 }
@@ -112,4 +194,10 @@ func decodeOne(t *testing.T, stdout string, v any) {
 	if dec.More() {
 		t.Fatalf("stdout holds more than one JSON document:\n%s", stdout)
 	}
+}
+
+func tunnelsOf(t *testing.T, d deps) *fakeTunnels {
+	t.Helper()
+	cf, _ := d.tunnels(context.Background())
+	return cf.(*fakeTunnels)
 }

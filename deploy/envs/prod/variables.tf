@@ -40,3 +40,19 @@ variable "claude_code_oauth_token" {
   type        = string
   sensitive   = true
 }
+
+variable "cloudflare_account_id" {
+  description = "Account that holds the sandbox tunnels and the Access application. From the `skybox` 1Password vault through secrets.env."
+  type        = string
+}
+
+variable "cloudflare_zone" {
+  description = "Name of the zone that sandbox hostnames live under. From the `skybox` 1Password vault through secrets.env."
+  type        = string
+}
+
+variable "access_email" {
+  description = "Email of the only Cloudflare Access identity that may reach a sandbox. From the `skybox` 1Password vault through secrets.env."
+  type        = string
+  sensitive   = true
+}

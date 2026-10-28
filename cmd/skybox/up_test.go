@@ -8,7 +8,7 @@ import (
 )
 
 func TestUpJSONReportsTheNewSandbox(t *testing.T) {
-	got := runCLI(t, testDeps(newFakeProvider()), "up", "api-fix", "--json")
+	got := runCLI(t, testDeps(t, newFakeProvider()), "up", "api-fix", "--json")
 
 	var doc sandbox.Sandbox
 	decodeOne(t, got.stdout, &doc)
@@ -29,7 +29,7 @@ func TestUpPicksTheMachineOfEachSize(t *testing.T) {
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			p := newFakeProvider()
-			got := runCLI(t, testDeps(p), tc.args...)
+			got := runCLI(t, testDeps(t, p), tc.args...)
 
 			if got.code != 0 || len(p.created) != 1 || p.created[0].Size != tc.size {
 				t.Fatalf("%v = %d, created %+v; want one %s sandbox", tc.args, got.code, p.created, tc.size)
@@ -43,7 +43,7 @@ func TestUpPicksTheMachineOfEachSize(t *testing.T) {
 
 func TestUpInstallsTheAgentsSSHKeys(t *testing.T) {
 	p := newFakeProvider()
-	runCLI(t, testDeps(p), "up", "api-fix")
+	runCLI(t, testDeps(t, p), "up", "api-fix")
 
 	if len(p.created) != 1 || len(p.created[0].SSHKeys) != 1 {
 		t.Fatalf("created %+v; want the agent's one key in the spec", p.created)
@@ -52,7 +52,7 @@ func TestUpInstallsTheAgentsSSHKeys(t *testing.T) {
 
 func TestUpFailsWhenTheSandboxExists(t *testing.T) {
 	p := newFakeProvider(sandbox.Sandbox{Name: "api-fix", Size: sandbox.Light, State: sandbox.Asleep})
-	got := runCLI(t, testDeps(p), "up", "api-fix")
+	got := runCLI(t, testDeps(t, p), "up", "api-fix")
 
 	if got.code != 1 || !strings.Contains(got.stderr, "sandbox api-fix already exists (light, asleep)") || len(p.created) != 0 {
 		t.Fatalf("up api-fix = %d, stderr %q, created %d; want exit 1 naming the existing sandbox", got.code, got.stderr, len(p.created))
@@ -61,7 +61,7 @@ func TestUpFailsWhenTheSandboxExists(t *testing.T) {
 
 func TestUpRejectsAnUnknownSize(t *testing.T) {
 	p := newFakeProvider()
-	got := runCLI(t, testDeps(p), "up", "api-fix", "--size", "huge")
+	got := runCLI(t, testDeps(t, p), "up", "api-fix", "--size", "huge")
 
 	if got.code != 1 || !strings.Contains(got.stderr, "light, standard or large") || len(p.created) != 0 {
 		t.Fatalf("up --size huge = %d, stderr %q; want exit 1 listing light, standard and large", got.code, got.stderr)
@@ -71,7 +71,7 @@ func TestUpRejectsAnUnknownSize(t *testing.T) {
 func TestUpFailsNamingTheFamilyWithoutQuota(t *testing.T) {
 	p := newFakeProvider()
 	p.capacity = &sandbox.CapacityError{Size: sandbox.Standard, Region: "germanywestcentral", Family: "StandardDasv7Family", Free: 2, Need: 4}
-	got := runCLI(t, testDeps(p), "up", "api-fix")
+	got := runCLI(t, testDeps(t, p), "up", "api-fix")
 
 	if got.code != 1 || !strings.Contains(got.stderr, "StandardDasv7Family") || len(p.created) != 0 {
 		t.Fatalf("up = %d, stderr %q; want exit 1 naming the VM family", got.code, got.stderr)

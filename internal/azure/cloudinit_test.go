@@ -10,8 +10,9 @@ import (
 type cloudConfig struct {
 	Users      []any `yaml:"users"`
 	WriteFiles []struct {
-		Path    string `yaml:"path"`
-		Content string `yaml:"content"`
+		Path        string `yaml:"path"`
+		Content     string `yaml:"content"`
+		Permissions string `yaml:"permissions"`
 	} `yaml:"write_files"`
 	Runcmd []any `yaml:"runcmd"`
 }
@@ -20,6 +21,7 @@ func render(t *testing.T) (string, cloudConfig) {
 	t.Helper()
 	out, err := renderCloudInit(cloudInitData{
 		SSHKeys:          []string{"ssh-ed25519 AAAA laptop", `ssh-rsa BBBB "quoted": key`},
+		TunnelToken:      "tunnel-token",
 		KeyVaultName:     "kv-skybox-prod-abc123",
 		IdentityClientID: "client-id",
 		T3Version:        "1.2.3",
@@ -109,5 +111,39 @@ func TestCloudInitReadsTheClaudeTokenThroughTheIdentity(t *testing.T) {
 	}
 	if strings.Contains(out, "sk-ant-") {
 		t.Fatal("cloud-init carries a Claude token")
+	}
+}
+
+func TestOnlyRootReadsTheTunnelToken(t *testing.T) {
+	_, config := render(t)
+	for _, f := range config.WriteFiles {
+		if f.Path == "/etc/cloudflared/token" {
+			if f.Content != "tunnel-token" || f.Permissions != "0600" {
+				t.Fatalf("tunnel token file = %q with mode %s; want the token, mode 0600", f.Content, f.Permissions)
+			}
+			return
+		}
+	}
+	t.Fatal("cloud-init writes no tunnel token")
+}
+
+func TestCloudflaredStartsLastAndReadsTheTokenFile(t *testing.T) {
+	_, config := render(t)
+	unit := file(t, config, "/etc/systemd/system/cloudflared.service")
+	if !strings.Contains(unit, "--token-file /etc/cloudflared/token") {
+		t.Fatalf("cloudflared does not read the token file:\n%s", unit)
+	}
+	last, _ := config.Runcmd[len(config.Runcmd)-1].([]any)
+	if len(last) != 4 || last[3] != "cloudflared.service" {
+		t.Fatalf("the last command is %v; want cloudflared to start last", last)
+	}
+}
+
+func TestCloudInitNeverLinksTheSandboxToT3Connect(t *testing.T) {
+	out, _ := render(t)
+	for _, command := range []string{"t3 connect", "t3 cloud", "t3 relay", "t3 login"} {
+		if strings.Contains(out, command) {
+			t.Errorf("cloud-init runs %q", command)
+		}
 	}
 }

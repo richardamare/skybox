@@ -13,6 +13,26 @@ package_update: true
 packages: [git, curl, jq, unzip, tmux, build-essential, ca-certificates, ripgrep]
 
 write_files:
+  # Readable by root alone, so the agent account cannot run a second connector for this sandbox's hostname.
+  - path: /etc/cloudflared/token
+    permissions: "0600"
+    content: {{ json .TunnelToken }}
+
+  - path: /etc/systemd/system/cloudflared.service
+    content: |
+      [Unit]
+      Description=Cloudflare tunnel to this sandbox's sshd
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file /etc/cloudflared/token
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
   # Copies the Claude token from Key Vault into the agent account's T3 Code service environment, on every boot so a
   # rotated token reaches the sandbox when it wakes.
   - path: /usr/local/sbin/skybox-claude-token
@@ -80,3 +100,8 @@ runcmd:
   - [loginctl, enable-linger, agent]
   - [sh, -c, 'for _ in $(seq 60); do [ -S /run/user/$(id -u agent)/bus ] && break; sleep 1; done']
   - [sudo, -iu, agent, /usr/local/lib/skybox/agent-setup.sh]
+  - [sh, -c, 'curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg']
+  - [sh, -c, 'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list']
+  - [sh, -c, 'apt-get update && apt-get install -y cloudflared']
+  # Last, so a connected tunnel tells skybox up that the sandbox is ready.
+  - [systemctl, enable, --now, cloudflared.service]

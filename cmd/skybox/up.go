@@ -1,20 +1,21 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/richardamare/skybox/internal/sandbox"
+	"github.com/richardamare/skybox/internal/sshconfig"
 )
 
 func (d deps) upCommand(asJSON *bool) *cobra.Command {
 	var size string
 	cmd := &cobra.Command{
 		Use:   "up <name>",
-		Short: "Create a sandbox",
+		Short: "Create a sandbox and the ssh alias that reaches it",
 		Args:  cobra.ExactArgs(1),
 		RunE: runE(asJSON, func(cmd *cobra.Command, args []string) (result, error) {
 			return d.up(cmd, args[0], size)
@@ -24,6 +25,8 @@ func (d deps) upCommand(asJSON *bool) *cobra.Command {
 	return cmd
 }
 
+// up checks everything it can before it creates anything, and removes the tunnel and DNS record again when the
+// sandbox itself cannot be created.
 func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	ctx := cmd.Context()
 	if err := sandbox.ValidateName(name); err != nil {
@@ -52,19 +55,48 @@ func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	if err != nil {
 		return nil, err
 	}
+	cf, err := d.tunnels(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	hostname := cf.Hostname(name)
+	progress(cmd, "creating the tunnel for %s", hostname)
+	tunnel, err := cf.CreateTunnel(ctx, sshconfig.Alias(name))
+	if err != nil {
+		return nil, err
+	}
+	labels := map[string]string{labelTunnelID: tunnel.ID, labelHostname: hostname}
+	release := func(cause error) error {
+		cleanup := context.WithoutCancel(ctx)
+		if id := labels[labelDNSRecord]; id != "" {
+			cause = errors.Join(cause, cf.DeleteDNSRecord(cleanup, id))
+		}
+		return errors.Join(cause, cf.DeleteTunnel(cleanup, tunnel.ID))
+	}
+	if err := cf.RouteSSH(ctx, tunnel.ID, hostname); err != nil {
+		return nil, release(err)
+	}
+	recordID, err := cf.CreateDNSRecord(ctx, name, hostname, tunnel.ID)
+	if err != nil {
+		return nil, release(err)
+	}
+	labels[labelDNSRecord] = recordID
 
 	progress(cmd, "creating %s (%s)", name, size)
-	created, err := provider.Create(ctx, sandbox.Spec{Name: name, Size: size, SSHKeys: keys})
+	created, err := provider.Create(ctx, sandbox.Spec{Name: name, Size: size, SSHKeys: keys, TunnelToken: tunnel.Token, Labels: labels})
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", name, err)
+		return nil, release(fmt.Errorf("create %s: %w", name, err))
 	}
-	return sandboxResult{created}, nil
-}
-
-type sandboxResult struct {
-	sandbox.Sandbox
-}
-
-func (r sandboxResult) writeText(w io.Writer) {
-	fmt.Fprintf(w, "%s is %s on %s (%s)\n", r.Name, r.State, r.MachineType, r.Size)
+	block := sshconfig.Block(name, hostname, d.executable, d.knownHosts)
+	catchAll := sshconfig.CatchAll(d.executable, d.knownHosts)
+	if err := sshconfig.Update(d.sshConfig, func(c string) string {
+		return sshconfig.WithCatchAll(sshconfig.With(c, name, block), catchAll)
+	}); err != nil {
+		return nil, fmt.Errorf("write the ssh alias %s to %s: %w", sshconfig.Alias(name), d.sshConfig, err)
+	}
+	if err := d.waitForTunnel(ctx, cmd, cf, name, tunnel.ID); err != nil {
+		return nil, err
+	}
+	return newSandboxResult(created), nil
 }

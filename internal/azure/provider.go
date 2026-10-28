@@ -251,6 +251,7 @@ func (p *Provider) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Sandb
 	}
 	userData, err := renderCloudInit(cloudInitData{
 		SSHKeys:          spec.SSHKeys,
+		TunnelToken:      spec.TunnelToken,
 		KeyVaultName:     vault,
 		IdentityClientID: deref(identity.Properties.ClientID),
 		T3Version:        t3Version,

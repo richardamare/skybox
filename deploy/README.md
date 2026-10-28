@@ -27,6 +27,9 @@ In `rg-skybox-prod-gwc`, in germanywestcentral, every resource tagged `skybox:co
   on the vault, and may grant only the two Key Vault roles.
 - In Cloudflare, the zone setting `websockets`, which SSH over Access needs. The zone is shared with other sites, so
   Terraform manages no other zone setting.
+- The Cloudflare Access application `skybox sandboxes` on `*-sbx.<zone>`, which covers every sandbox's SSH hostname.
+  Its one policy admits the email in the `access email` field of the `Cloudflare API token` item, for 24 hours per
+  sign-in. The hostnames sit one level below the zone, so the zone's Universal SSL certificate covers them.
 
 The state lives in `stskyboxamaretfstate`, in its own resource group `rg-skybox-tfstate`, apart from everything else.
 Shared keys are off, so Terraform reads it and takes its lock lease with Entra.
