@@ -268,11 +268,12 @@ resource "azurerm_log_analytics_workspace" "main" {
   tags                = local.tags
 }
 
-# Container Apps cannot create new environments in germanywestcentral (AKSCapacityHeavyUsage), so the control
-# plane runs in westeurope. It only calls the Azure and Cloudflare APIs, so its region does not matter.
+# Container Apps cannot create new environments in germanywestcentral (AKSCapacityHeavyUsage), and westeurope
+# refuses this subscription (RequestDisallowedByAzure), so the control plane runs in northeurope. It only calls the
+# Azure and Cloudflare APIs, so its region does not matter.
 locals {
-  control_plane_location       = "westeurope"
-  control_plane_location_short = "weu"
+  control_plane_location       = "northeurope"
+  control_plane_location_short = "neu"
 }
 
 resource "azurerm_container_app_environment" "main" {
