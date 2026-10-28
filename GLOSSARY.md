@@ -28,6 +28,10 @@ _Avoid_: Service user, runner
 A sandbox as T3 Code sees it: a T3 Code server the desktop reaches over SSH, listed under Settings → Environments and in Run on once added.
 _Avoid_: Connection, remote, target
 
+**Agent toolkit**:
+The Claude Code plugins `agent-config@agent-config`, `mattpocock-skills@mattpocock` and `pstack@pstack-claude`, and the global `~/.claude/CLAUDE.md` from agent-config, which `skybox sync` gives a sandbox's agent account so its agents work as the Mac's do.
+_Avoid_: Dotfiles, setup, plugins (for the whole set)
+
 **Link**:
 A sandbox added under Linked environments in T3 Code on the Mac, reached over the tailnet at `https://<name>.<tailnet>.ts.net`, so agents on the Mac start and delegate work there whether or not the desktop runs.
 _Avoid_: Pairing, linked connection

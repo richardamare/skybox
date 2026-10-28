@@ -6,13 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/richardamare/skybox/internal/cloudflare"
 	"github.com/richardamare/skybox/internal/sandbox"
 	"github.com/richardamare/skybox/internal/tailscale"
+	"github.com/richardamare/skybox/internal/toolkit"
 )
 
 // fakeProvider keeps sandboxes in memory and gives each size the machine type the Azure provider uses.
@@ -207,6 +212,156 @@ func (f *fakeTailnet) DeleteDevices(_ context.Context, sandbox string) error {
 	return nil
 }
 
+// fakeClaude stands in for Claude Code on a sandbox. It logs every call, keeps the installed plugins one per line,
+// and reports agent-config's version as the commit of the directory its marketplace was added from, as Claude Code
+// does for a plugin whose manifest names no version.
+const fakeClaude = `#!/bin/bash
+set -euo pipefail
+state="$HOME/.fake-claude"
+mkdir -p "$state"
+touch "$state/installed"
+echo "$*" >>"$state/calls"
+case "$1 $2" in
+"plugin marketplace")
+  if [[ $3 == add && -d $4 ]]; then echo "$4" >"$state/agent-config-source"; fi
+  ;;
+"plugin install")
+  grep -qxF "$3" "$state/installed" || echo "$3" >>"$state/installed"
+  ;;
+"plugin update")
+  grep -qxF "$3" "$state/installed"
+  ;;
+"plugin uninstall")
+  grep -vxF "$3" "$state/installed" >"$state/next" || true
+  mv "$state/next" "$state/installed"
+  ;;
+"plugin list")
+  sep=
+  printf '['
+  while read -r id; do
+    version=1.0.0
+    if [[ $id == agent-config@agent-config ]]; then
+      version=$(git -C "$(cat "$state/agent-config-source")" rev-parse --short=12 HEAD)
+    fi
+    printf '%s{"id":"%s","version":"%s","scope":"user","enabled":true}' "$sep" "$id" "$version"
+    sep=,
+  done <"$state/installed"
+  printf ']\n'
+  ;;
+esac
+`
+
+// fakeSandboxes are the agent accounts' homes behind each ssh alias. ssh runs the command there with bash, as the
+// sandbox's login shell would, with the fake claude first on the PATH the toolkit script sets.
+type fakeSandboxes struct {
+	t     *testing.T
+	root  string
+	calls []string
+	// beforeRun checks the Mac's state at the moment ssh starts.
+	beforeRun func(alias string)
+}
+
+// home returns the agent account's home behind alias, with Claude Code in it.
+func (f *fakeSandboxes) home(alias string) string {
+	f.t.Helper()
+	home := filepath.Join(f.root, alias)
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(fakeClaude), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	return home
+}
+
+func (f *fakeSandboxes) ssh(ctx context.Context, alias, command string, stdin io.Reader, stdout, stderr io.Writer) error {
+	f.calls = append(f.calls, alias)
+	if f.beforeRun != nil {
+		f.beforeRun(alias)
+	}
+	home := f.home(alias)
+	shell := exec.CommandContext(ctx, "bash", "-c", command)
+	shell.Dir = home
+	shell.Env = append(os.Environ(), "HOME="+home)
+	shell.Stdin, shell.Stdout, shell.Stderr = stdin, stdout, stderr
+	return shell.Run()
+}
+
+// installed reads the plugins Claude Code holds behind alias.
+func (f *fakeSandboxes) installed(alias string) []string {
+	f.t.Helper()
+	data, err := os.ReadFile(filepath.Join(f.home(alias), ".fake-claude", "installed"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return strings.Fields(string(data))
+}
+
+// claudeCalls reads every claude command line the sandbox behind alias ran.
+func (f *fakeSandboxes) claudeCalls(alias string) []string {
+	f.t.Helper()
+	data, err := os.ReadFile(filepath.Join(f.home(alias), ".fake-claude", "calls"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// withToolkit gives the Mac an agent-config clone at d.agentConfig with one commit, and points ssh at fake sandboxes.
+func withToolkit(t *testing.T, d *deps) *fakeSandboxes {
+	t.Helper()
+	writeFiles(t, d.agentConfig, map[string]string{
+		".claude-plugin/marketplace.json":   `{"name":"agent-config","plugins":[{"name":"agent-config","source":"./plugin"}]}`,
+		"plugin/.claude-plugin/plugin.json": `{"name":"agent-config"}`,
+		"plugin/skills/review/SKILL.md":     "---\nname: review\n---\nReview the diff.\n",
+		"plugin/hooks/format.sh":            "#!/bin/sh\n",
+		toolkit.Instructions:                "# Rules\n\nEvery agent follows these. ✓",
+	})
+	if err := os.Chmod(filepath.Join(d.agentConfig, "plugin/hooks/format.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(toolkit.Instructions, filepath.Join(d.agentConfig, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, d.agentConfig, "init", "-q")
+	commitAll(t, d.agentConfig, "first")
+	f := &fakeSandboxes{t: t, root: t.TempDir()}
+	d.ssh = f.ssh
+	return f
+}
+
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// commitAll commits every change in the clone and returns the short commit Claude Code reports as the version.
+func commitAll(t *testing.T, dir, message string) string {
+	t.Helper()
+	git(t, dir, "add", "-A")
+	git(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+		"-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message)
+	return git(t, dir, "rev-parse", "--short=12", "HEAD")
+}
+
 // testDeps runs every command against fakes, with ~/.ssh in a temporary directory.
 func testDeps(t *testing.T, p *fakeProvider) deps {
 	t.Helper()
@@ -224,9 +379,14 @@ func testDeps(t *testing.T, p *fakeProvider) deps {
 			t.Fatal("proxy connected")
 			return nil
 		},
-		answers:       func(context.Context, string) bool { return true },
+		answers: func(context.Context, string) bool { return true },
+		ssh: func(context.Context, string, string, io.Reader, io.Writer, io.Writer) error {
+			t.Fatal("ssh ran")
+			return nil
+		},
 		sshConfig:     filepath.Join(home, ".ssh", "config"),
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
+		agentConfig:   filepath.Join(home, ".claude", "plugins", "marketplaces", "agent-config"),
 		executable:    "/usr/local/bin/skybox",
 		tunnelTimeout: time.Second,
 		joinTimeout:   10 * time.Millisecond,
