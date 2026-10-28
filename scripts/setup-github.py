@@ -4,7 +4,8 @@
 # dependencies = []
 # ///
 """Create the public GitHub repository if it is missing and apply its settings, labels, security features, admin
-access, the outside-contribution limits and the master ruleset. Safe to rerun: every step converges on the state below.
+access, the outside-contribution limits, the master ruleset, the Actions variables and the prod environment. Safe to
+rerun: every step converges on the state below.
 
 The repository is public but closed to contributions: only collaborators open pull requests, issues and comments, and a
 pull request from a fork runs workflows only after approval. GitHub caps the interaction limit at six months, so rerun
@@ -54,6 +55,18 @@ LABELS = {
     "ready-for-human": ("5319e7", "Needs a person to implement it"),
     "wontfix": ("ffffff", "Will not be actioned"),
 }
+
+# Identifiers the infra workflow signs in to Azure with. None is a secret: OIDC needs no Azure secret, and the only
+# GitHub secret is OP_SERVICE_ACCOUNT_TOKEN. AZURE_CLIENT_ID is the Terraform output github_actions_client_id.
+VARIABLES = {
+    "AZURE_CLIENT_ID": "ad6e74ac-b233-40b8-8754-c817ce11ef1d",
+    "AZURE_TENANT_ID": "3b5e471e-896d-4f87-b17c-b96fe77b340c",
+    "AZURE_SUBSCRIPTION_ID": "d349301a-5b5b-4fa0-b6a9-9a30d80b7047",
+}
+
+# Azure trusts only the prod environment's OIDC subject, so this branch list decides which refs can sign in to Azure.
+ENVIRONMENT = "prod"
+ENVIRONMENT_BRANCHES = ["master"]
 
 # Actor 5 is the repository admin role, which apply_admins leaves to the person running this script.
 RULESET = {
@@ -188,6 +201,32 @@ def apply_ruleset() -> None:
         api("PUT", f"/rulesets/{existing}", RULESET)
 
 
+def apply_variables() -> None:
+    step("Actions variables")
+    existing = json.loads(run("gh", "variable", "list", "--repo", REPO, "--json", "name").stdout)
+    for variable in existing:
+        if variable["name"] not in VARIABLES:
+            run("gh", "variable", "delete", variable["name"], "--repo", REPO)
+    for name, value in VARIABLES.items():
+        run("gh", "variable", "set", name, "--repo", REPO, "--body", value)
+
+
+def apply_environment() -> None:
+    step(f"Environment {ENVIRONMENT}, deployable from {', '.join(ENVIRONMENT_BRANCHES)} only")
+    policy = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+    api("PUT", f"/environments/{ENVIRONMENT}", policy)
+
+    path = f"/environments/{ENVIRONMENT}/deployment-branch-policies"
+    existing = json.loads(api("GET", path).stdout)["branch_policies"]
+    for branch_policy in existing:
+        if branch_policy["name"] not in ENVIRONMENT_BRANCHES or branch_policy.get("type", "branch") != "branch":
+            api("DELETE", f"{path}/{branch_policy['id']}")
+    present = {p["name"] for p in existing if p.get("type", "branch") == "branch"}
+    for branch in ENVIRONMENT_BRANCHES:
+        if branch not in present:
+            api("POST", path, {"name": branch, "type": "branch"})
+
+
 def main() -> None:
     try:
         ensure_repository()
@@ -197,6 +236,8 @@ def main() -> None:
         apply_labels()
         apply_admins()
         apply_ruleset()
+        apply_variables()
+        apply_environment()
     except subprocess.CalledProcessError as error:
         sys.exit(f"{' '.join(error.cmd)} failed:\n{error.stderr}")
     print(f"==> Done: https://github.com/{REPO}")

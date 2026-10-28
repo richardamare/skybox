@@ -1,0 +1,20 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+.terraform.tfstate.lock.info
+
+# A plan file embeds a state snapshot with every secret value in it.
+*.tfplan
+
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+.terraformrc
+terraform.rc
+
+# terraform test initialises a module on its own and leaves a lock file there. Only envs/ pin providers.
+modules/**/.terraform.lock.hcl

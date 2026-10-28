@@ -1,0 +1,102 @@
+name: infra
+
+# Every run plans. Only a manual run with action=apply changes anything.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan shows the changes. apply makes them, then tests the result."
+        type: choice
+        options: [plan, apply]
+        default: plan
+  push:
+    branches: [master]
+    paths: ["deploy/**", ".github/workflows/infra.yml"]
+
+concurrency:
+  group: infra
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: deploy/envs/prod
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  APPLY: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'apply' }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The prod environment admits master only, and its federated credential is the only way to sign in to Azure.
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: 1password/install-cli-action@v4
+
+      # Every key comes from the skybox vault. The action masks each value it loads.
+      - uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENV_FILE: ${{ env.TF_DIR }}/secrets.env
+
+      - uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~1.17"
+          terraform_wrapper: false
+
+      - run: terraform -chdir="$TF_DIR" init -input=false
+
+      # The saved plan holds every secret value, so it never leaves the runner.
+      - run: terraform -chdir="$TF_DIR" plan -input=false -out=prod.tfplan
+
+      - if: env.APPLY == 'true'
+        run: terraform -chdir="$TF_DIR" apply -input=false prod.tfplan
+
+      - if: env.APPLY == 'true'
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+        run: deploy/tests/foundation.sh
+
+  # Reads the finished terraform job's log, so it covers every step there, Terraform's output included.
+  log-check:
+    needs: terraform
+    if: always() && needs.terraform.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: 1password/install-cli-action@v4
+
+      - uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENV_FILE: ${{ env.TF_DIR }}/secrets.env
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+        run: deploy/tests/log-has-no-secret.sh "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" terraform
