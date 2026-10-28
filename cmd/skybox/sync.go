@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -29,6 +30,24 @@ func (d deps) syncCommand(asJSON *bool) *cobra.Command {
 			return d.syncToolkit(cmd, name)
 		}),
 	}
+}
+
+// syncStarted is the last step of up and wake. Without an agent-config clone on the Mac it skips the toolkit and says
+// so, and any other failure leaves the sandbox running for skybox sync.
+func (d deps) syncStarted(cmd *cobra.Command, name string) error {
+	err := toolkit.CheckClone(d.agentConfig)
+	var missing *toolkit.MissingCloneError
+	if errors.As(err, &missing) {
+		progress(cmd, "skipped the agent toolkit on %s: %v, so run skybox sync %s once it is there", name, err, name)
+		return nil
+	}
+	if err == nil {
+		_, err = d.syncToolkit(cmd, name)
+	}
+	if err != nil {
+		return fmt.Errorf("%s is running, but its agent toolkit did not sync, so run skybox sync %s to try again: %w", name, name, err)
+	}
+	return nil
 }
 
 // syncToolkit copies the Mac's agent-config clone to a running sandbox and runs the toolkit's script there, over the

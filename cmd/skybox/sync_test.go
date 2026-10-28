@@ -218,3 +218,102 @@ func assertSameTree(t *testing.T, want, dir string) {
 		}
 	}
 }
+
+func TestUpSyncsTheToolkitLastOverTheNewAlias(t *testing.T) {
+	d := testDeps(t, newFakeProvider())
+	sandboxes := withToolkit(t, &d)
+	ts := tailnetOf(t, d)
+	sandboxes.beforeRun = func(alias string) {
+		config, _ := os.ReadFile(d.sshConfig)
+		if !strings.Contains(string(config), "Host "+alias+"\n") || len(ts.devices) != 1 {
+			t.Fatalf("up synced before the alias and the tailnet device existed:\n%s", config)
+		}
+	}
+	got := runCLI(t, d, "up", "web", "--json")
+
+	var doc sandboxResult
+	decodeOne(t, got.stdout, &doc)
+	installed := sandboxes.installed("skybox-web")
+	slices.Sort(installed)
+	if got.code != 0 || doc.Name != "web" || !slices.Equal(installed, toolkitPlugins) {
+		t.Fatalf("up web = %d, %+v, stderr %q, installed %v; want web with %v", got.code, doc, got.stderr, installed, toolkitPlugins)
+	}
+	if _, err := os.Stat(filepath.Join(sandboxes.home("skybox-web"), ".claude", "CLAUDE.md")); err != nil {
+		t.Fatalf("up left web without CLAUDE.md: %v", err)
+	}
+}
+
+func TestWakeSyncsTheToolkitBeforeItReturns(t *testing.T) {
+	asleep := runningSandbox("web")
+	asleep.State = sandbox.Asleep
+	p := newFakeProvider(asleep)
+	d := testDeps(t, p)
+	tunnelsOf(t, d).tunnels["tunnel-skybox-web"] = true
+	sandboxes := withToolkit(t, &d)
+	sandboxes.beforeRun = func(string) {
+		if p.sandboxes["web"].State != sandbox.Running {
+			t.Fatalf("wake synced a sandbox that is %s", p.sandboxes["web"].State)
+		}
+	}
+	first := runCLI(t, d, "wake", "web")
+
+	installed := sandboxes.installed("skybox-web")
+	slices.Sort(installed)
+	if first.code != 0 || !slices.Equal(installed, toolkitPlugins) {
+		t.Fatalf("wake web = %d, stderr %q, installed %v; want %v", first.code, first.stderr, installed, toolkitPlugins)
+	}
+
+	writeFiles(t, d.agentConfig, map[string]string{toolkit.Instructions: "# Rules, revised\n"})
+	version := commitAll(t, d.agentConfig, "second")
+	p.sandboxes["web"] = asleep
+	second := runCLI(t, d, "wake", "web")
+
+	home := sandboxes.home("skybox-web")
+	claudeMD, _ := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	copied := git(t, filepath.Join(home, ".skybox", "marketplaces", "agent-config"), "rev-parse", "--short=12", "HEAD")
+	if second.code != 0 || string(claudeMD) != "# Rules, revised\n" || copied != version {
+		t.Fatalf("wake web = %d, stderr %q, CLAUDE.md %q, agent-config at %s; want the revised rules at %s", second.code, second.stderr, claudeMD, copied, version)
+	}
+	if calls := sandboxes.claudeCalls("skybox-web"); !slices.Contains(calls, "plugin update agent-config@agent-config") {
+		t.Fatalf("claude ran %q; want agent-config's version updated", calls)
+	}
+}
+
+func TestUpAndWakeSkipTheToolkitWithoutACloneAndSaySo(t *testing.T) {
+	asleep := runningSandbox("web")
+	asleep.State = sandbox.Asleep
+	for _, args := range [][]string{{"up", "api-fix"}, {"wake", "web"}} {
+		t.Run(args[0], func(t *testing.T) {
+			d := testDeps(t, newFakeProvider(asleep))
+			tunnelsOf(t, d).tunnels["tunnel-skybox-web"] = true
+			got := runCLI(t, d, args...)
+
+			want := "skipped the agent toolkit on " + args[1] + ": no agent-config clone at " + d.agentConfig + ", so run skybox sync " + args[1] + " once it is there\n"
+			if got.code != 0 || !strings.Contains(got.stderr, want) {
+				t.Fatalf("%v = %d, stderr %q; want exit 0 and %q", args, got.code, got.stderr, want)
+			}
+		})
+	}
+}
+
+func TestUpAndWakeFailWhenTheToolkitDoesNotSyncAndKeepTheSandbox(t *testing.T) {
+	asleep := runningSandbox("web")
+	asleep.State = sandbox.Asleep
+	for _, args := range [][]string{{"up", "api-fix"}, {"wake", "web"}} {
+		t.Run(args[0], func(t *testing.T) {
+			p := newFakeProvider(asleep)
+			d := testDeps(t, p)
+			tunnelsOf(t, d).tunnels["tunnel-skybox-web"] = true
+			withToolkit(t, &d)
+			d.ssh = func(context.Context, string, string, io.Reader, io.Writer, io.Writer) error {
+				return errors.New("exit status 255")
+			}
+			got := runCLI(t, d, args...)
+
+			want := args[1] + " is running, but its agent toolkit did not sync, so run skybox sync " + args[1] + " to try again"
+			if got.code != 1 || !strings.Contains(got.stderr, want) || p.sandboxes[args[1]].State != sandbox.Running {
+				t.Fatalf("%v = %d, stderr %q, sandboxes %v; want exit 1, %q and the sandbox running", args, got.code, got.stderr, p.sandboxes, want)
+			}
+		})
+	}
+}

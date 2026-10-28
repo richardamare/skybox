@@ -15,7 +15,7 @@ func (d deps) upCommand(asJSON *bool) *cobra.Command {
 	var size string
 	cmd := &cobra.Command{
 		Use:   "up <name>",
-		Short: "Create a sandbox and the ssh alias that reaches it",
+		Short: "Create a sandbox, the ssh alias that reaches it, and its agent toolkit",
 		Args:  cobra.ExactArgs(1),
 		RunE: runE(asJSON, func(cmd *cobra.Command, args []string) (result, error) {
 			return d.up(cmd, args[0], size)
@@ -26,7 +26,9 @@ func (d deps) upCommand(asJSON *bool) *cobra.Command {
 }
 
 // up checks everything it can before it creates anything. A sandbox needs its own auth key, its tunnel and its DNS
-// records before its VM, so when a later step fails, up revokes and deletes what it made for the sandbox so far.
+// records before its VM, so when a step before the VM fails, up revokes and deletes what it made for the sandbox so
+// far. Once the VM exists, up leaves it for skybox down, and it returns once T3 Code answers on the tailnet and the
+// sandbox has its agent toolkit.
 func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	ctx := cmd.Context()
 	if err := sandbox.ValidateName(name); err != nil {
@@ -118,6 +120,9 @@ func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	}
 	url := "https://" + device.Name
 	if err := d.waitForServe(ctx, cmd, name, url); err != nil {
+		return nil, err
+	}
+	if err := d.syncStarted(cmd, name); err != nil {
 		return nil, err
 	}
 	res := newSandboxResult(created)
