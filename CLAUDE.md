@@ -39,3 +39,17 @@ Write each ticket from the form in `.github/ISSUE_TEMPLATE/` that matches its ki
 - Keep your PR comments current. When a check passes or its result changes, edit the comment that holds it (`gh pr comment --edit-last`, or `gh api --method PATCH repos/{owner}/{repo}/issues/comments/<id>`) rather than posting a new one under it, so the reader does not meet the stale state first.
 - A change that bumps the version in `package.json` adds a section for that version to `CHANGELOG.md` in the same commit, because nothing writes the changelog for you and a version without its entry leaves the release undocumented.
 - `scripts/setup-github.py` defines the repository's settings, labels and ruleset. Change a setting in the script and rerun it, so the script keeps matching the live repository.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `richardamare/skybox`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels, plus `feature`, `bug` and `tech-debt` as categories. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
