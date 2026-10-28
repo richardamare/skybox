@@ -24,7 +24,7 @@ fi
 
 names=(OP_SERVICE_ACCOUNT_TOKEN)
 while IFS='=' read -r name _; do
-  [[ $name =~ ^[A-Z_]+$ ]] && names+=("$name")
+  [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && names+=("$name")
 done <"$secrets_file"
 
 leaked=()
