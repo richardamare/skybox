@@ -16,6 +16,10 @@ _Avoid_: Platform, infrastructure, base
 The cloud a sandbox runs in, together with the code that creates, sleeps, wakes and deletes it there.
 _Avoid_: Backend, driver, cloud (for the code)
 
+**Size**:
+The profile a sandbox runs on, `light`, `standard` or `large`, which each provider maps to one of its machine types.
+_Avoid_: Tier, flavor, SKU (except for the provider's machine type)
+
 **Agent account**:
 The unprivileged Linux user on a sandbox that runs the T3 Code server and every agent.
 _Avoid_: Service user, runner
