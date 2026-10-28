@@ -1,0 +1,39 @@
+set -euo pipefail
+# Claude Code's progress goes to stderr, so stdout carries the final plugin list alone.
+exec 3>&1 1>&2
+export PATH="$HOME/.local/bin:$PATH"
+
+# The copy replaces the last one whole, so a file deleted on the Mac is gone here too. It takes the time of the
+# extraction, as the clocks of the Mac and the sandbox differ.
+copy="$HOME/{{ .CopyDir }}"
+mkdir -p "$(dirname "$copy")"
+rm -rf "$copy.next"
+mkdir "$copy.next"
+tar -x -m -f - -C "$copy.next"
+exec </dev/null
+rm -rf "$copy"
+mv "$copy.next" "$copy"
+
+# Adding a marketplace that is already there changes nothing, so every sync adds each one, then updates it.
+{{- range .Plugins }}
+{{- if .Repo }}
+claude plugin marketplace add {{ quote .Repo }}
+{{- else }}
+claude plugin marketplace add "$copy"
+{{- end }}
+claude plugin marketplace update {{ quote .Marketplace }}
+claude plugin install {{ quote .ID }}
+claude plugin update {{ quote .ID }}
+{{- end }}
+
+claude plugin list --json |
+  jq -r --argjson keep {{ quote .Keep }} '.[] | select(.scope == "user" and (.id | IN($keep[]) | not)) | .id' |
+  while read -r extra; do
+    claude plugin uninstall "$extra"
+  done
+
+mkdir -p "$HOME/.claude"
+cp "$copy/{{ .Instructions }}" "$HOME/.claude/.CLAUDE.md.next"
+mv "$HOME/.claude/.CLAUDE.md.next" "$HOME/.claude/CLAUDE.md"
+
+claude plugin list --json >&3

@@ -39,9 +39,13 @@ type deps struct {
 	connect func(hostname string) error
 	// answers reports whether T3 Code responds at a sandbox's tailnet address.
 	answers func(ctx context.Context, url string) bool
+	// ssh runs command on a sandbox through its ssh alias, with stdin, stdout and stderr connected as given.
+	ssh func(ctx context.Context, alias, command string, stdin io.Reader, stdout, stderr io.Writer) error
 
 	sshConfig  string
 	knownHosts string
+	// agentConfig is the Mac's clone of agent-config, which sync copies to a sandbox.
+	agentConfig string
 	// executable is the skybox binary that the ssh alias runs as its ProxyCommand.
 	executable string
 	// tunnelTimeout bounds how long up and wake wait for the sandbox's tunnel to connect.
@@ -96,8 +100,10 @@ func defaultDeps() deps {
 		},
 		connect:       execCloudflared,
 		answers:       answersHTTP,
+		ssh:           execSSH,
 		sshConfig:     filepath.Join(home, ".ssh", "config"),
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
+		agentConfig:   filepath.Join(home, ".claude", "plugins", "marketplaces", "agent-config"),
 		executable:    executable,
 		tunnelTimeout: 10 * time.Minute,
 		joinTimeout:   2 * time.Minute,
@@ -141,7 +147,7 @@ func (d deps) execute(ctx context.Context, args []string, stdout, stderr io.Writ
 func (d deps) rootCommand(asJSON *bool) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "skybox",
-		Short:         "Create, sleep, wake and delete sandboxes where coding agents work",
+		Short:         "Create, sleep, wake, sync and delete sandboxes where coding agents work",
 		Version:       skybox.Version,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -160,6 +166,7 @@ func (d deps) rootCommand(asJSON *bool) *cobra.Command {
 		d.sleepCommand(asJSON),
 		d.wakeCommand(asJSON),
 		d.downCommand(asJSON),
+		d.syncCommand(asJSON),
 		d.proxyCommand(),
 	)
 	return root
