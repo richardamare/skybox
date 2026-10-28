@@ -3,7 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = []
 # ///
-"""Create the private GitHub repository if it is missing and apply its settings, labels, security features, admin
+"""Create the public GitHub repository if it is missing and apply its settings, labels, security features, admin
 access and the master ruleset. Safe to rerun: every step converges on the state below.
 
 The person running the script ends up as the only repository admin; every other admin collaborator or team drops to
@@ -22,6 +22,7 @@ REPO = sys.argv[1]
 RULESET_NAME = "master"
 
 SETTINGS = {
+    "private": False,
     "has_wiki": False,
     "has_projects": False,
     "has_discussions": False,
@@ -94,8 +95,8 @@ def step(title: str) -> None:
 
 def ensure_repository() -> None:
     if run("gh", "repo", "view", REPO, check=False).returncode != 0:
-        step(f"Creating private repository {REPO}")
-        run("gh", "repo", "create", REPO, "--private")
+        step(f"Creating public repository {REPO}")
+        run("gh", "repo", "create", REPO, "--public")
     if run("git", "remote", "get-url", "origin", check=False).returncode != 0:
         run("git", "remote", "add", "origin", f"https://github.com/{REPO}.git")
 
