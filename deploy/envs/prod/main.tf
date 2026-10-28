@@ -268,10 +268,17 @@ resource "azurerm_log_analytics_workspace" "main" {
   tags                = local.tags
 }
 
+# Container Apps cannot create new environments in germanywestcentral (AKSCapacityHeavyUsage), so the control
+# plane runs in westeurope. It only calls the Azure and Cloudflare APIs, so its region does not matter.
+locals {
+  control_plane_location       = "westeurope"
+  control_plane_location_short = "weu"
+}
+
 resource "azurerm_container_app_environment" "main" {
-  name                       = "cae-${local.workload}-${local.env}-${local.location_short}"
+  name                       = "cae-${local.workload}-${local.env}-${local.control_plane_location_short}"
   resource_group_name        = azurerm_resource_group.main.name
-  location                   = azurerm_resource_group.main.location
+  location                   = local.control_plane_location
   logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   tags                       = local.tags
@@ -280,7 +287,7 @@ resource "azurerm_container_app_environment" "main" {
 resource "azurerm_container_app_job" "control_plane" {
   name                         = "job-${local.workload}-control"
   resource_group_name          = azurerm_resource_group.main.name
-  location                     = azurerm_resource_group.main.location
+  location                     = local.control_plane_location
   container_app_environment_id = azurerm_container_app_environment.main.id
   # Shorter than the schedule's interval, so two runs never overlap.
   replica_timeout_in_seconds = 840
