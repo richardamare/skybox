@@ -194,3 +194,145 @@ resource "cloudflare_zero_trust_access_application" "sandboxes" {
     precedence = 1
   }]
 }
+
+# The control plane: skyboxctl reconciles every 15 minutes as a Container Apps Job. It reads every resource in the
+# subscription, acts inside the foundation's resource group, and may delete a resource group, which it does only for
+# a group tagged as a sandbox's that holds nothing untagged.
+module "control_identity" {
+  source = "../../modules/uami"
+
+  name                = "id-${local.workload}-control-${local.location_short}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = local.tags
+}
+
+data "azurerm_subscription" "current" {}
+
+# Granted by an Owner applying from a Mac, like the deploy identity's own roles, since the deploy identity may grant
+# only the two Key Vault roles.
+resource "azurerm_role_assignment" "control_contributor" {
+  scope                = azurerm_resource_group.main.id
+  role_definition_name = "Contributor"
+  principal_id         = module.control_identity.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "control_subscription_reader" {
+  scope                = data.azurerm_subscription.current.id
+  role_definition_name = "Reader"
+  principal_id         = module.control_identity.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_definition" "resource_group_deleter" {
+  name        = "skybox resource group deleter"
+  scope       = data.azurerm_subscription.current.id
+  description = "Deletes a resource group and everything in it."
+  permissions {
+    actions = ["Microsoft.Resources/subscriptions/resourceGroups/delete"]
+  }
+  assignable_scopes = [data.azurerm_subscription.current.id]
+}
+
+resource "azurerm_role_assignment" "control_resource_group_deleter" {
+  scope              = data.azurerm_subscription.current.id
+  role_definition_id = azurerm_role_definition.resource_group_deleter.role_definition_resource_id
+  principal_id       = module.control_identity.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# Lets the infra workflow's plan read the subscription-scoped role definition and assignments above.
+resource "azurerm_role_assignment" "github_actions_subscription_reader" {
+  scope                = data.azurerm_subscription.current.id
+  role_definition_name = "Reader"
+  principal_id         = module.github_oidc.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "control_cloudflare_token_reader" {
+  scope                = azurerm_key_vault_secret.cloudflare_api_token.resource_versionless_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = module.control_identity.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+# The daily cap keeps the logs inside Log Analytics' free 5 GB a month.
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "log-${local.workload}-${local.env}-${local.location_short}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  daily_quota_gb      = 0.15
+  tags                = local.tags
+}
+
+resource "azurerm_container_app_environment" "main" {
+  name                       = "cae-${local.workload}-${local.env}-${local.location_short}"
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = azurerm_resource_group.main.location
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  tags                       = local.tags
+}
+
+resource "azurerm_container_app_job" "control_plane" {
+  name                         = "job-${local.workload}-control"
+  resource_group_name          = azurerm_resource_group.main.name
+  location                     = azurerm_resource_group.main.location
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  # Shorter than the schedule's interval, so two runs never overlap.
+  replica_timeout_in_seconds = 840
+  replica_retry_limit        = 0
+  tags                       = local.tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [module.control_identity.id]
+  }
+
+  schedule_trigger_config {
+    cron_expression          = "*/15 * * * *"
+    parallelism              = 1
+    replica_completion_count = 1
+  }
+
+  secret {
+    name                = "cloudflare-api-token"
+    key_vault_secret_id = azurerm_key_vault_secret.cloudflare_api_token.versionless_id
+    identity            = module.control_identity.id
+  }
+
+  template {
+    container {
+      name   = "skyboxctl"
+      image  = var.control_plane_image
+      cpu    = 0.25
+      memory = "0.5Gi"
+      args   = concat(["reconcile"], var.control_plane_enforce ? ["--enforce"] : [])
+
+      env {
+        name  = "AZURE_CLIENT_ID"
+        value = module.control_identity.client_id
+      }
+      env {
+        name        = "CLOUDFLARE_API_TOKEN"
+        secret_name = "cloudflare-api-token"
+      }
+      env {
+        name  = "CLOUDFLARE_ACCOUNT_ID"
+        value = var.cloudflare_account_id
+      }
+      env {
+        name  = "CLOUDFLARE_ZONE_ID"
+        value = var.cloudflare_zone_id
+      }
+      env {
+        name  = "CLOUDFLARE_ZONE"
+        value = var.cloudflare_zone
+      }
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.control_cloudflare_token_reader]
+}

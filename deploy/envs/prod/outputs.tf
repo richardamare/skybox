@@ -44,3 +44,7 @@ output "github_actions_principal_id" {
 output "github_actions_subject" {
   value = module.github_oidc.subject
 }
+
+output "control_plane_job_name" {
+  value = azurerm_container_app_job.control_plane.name
+}
