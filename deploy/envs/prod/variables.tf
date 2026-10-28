@@ -56,3 +56,15 @@ variable "access_email" {
   type        = string
   sensitive   = true
 }
+
+variable "control_plane_image" {
+  description = "Image the control plane's Container Apps Job runs. CI publishes it from master."
+  type        = string
+  default     = "ghcr.io/richardamare/skyboxctl:master"
+}
+
+variable "control_plane_enforce" {
+  description = "Whether the control plane acts. Without it every run only logs what it would do."
+  type        = bool
+  default     = false
+}

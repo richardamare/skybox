@@ -32,8 +32,33 @@ In `rg-skybox-prod-gwc`, in germanywestcentral, every resource tagged `skybox:co
   `access email` field of the `Cloudflare API token` item, for 24 hours per sign-in. The hostnames sit one level below
   the zone, so the zone's Universal SSL certificate covers them.
 
+- The control plane, `job-skybox-control`: a Container Apps Job in `cae-skybox-prod-gwc` that runs `skyboxctl
+  reconcile` every 15 minutes from `ghcr.io/richardamare/skyboxctl:master`, which CI publishes from `master`. It runs
+  as `id-skybox-control-gwc`, which holds Contributor on the resource group, Reader on the subscription, the custom role
+  `skybox resource group deleter` on the subscription, and Key Vault Secrets User on `cloudflare-api-token`, which
+  Container Apps reads into the job. Its logs go to `log-skybox-prod-gwc`, capped at 0.15 GB a day.
+
 The state lives in `stskyboxamaretfstate`, in its own resource group `rg-skybox-tfstate`, apart from everything else.
 Shared keys are off, so Terraform reads it and takes its lock lease with Entra.
+
+## The control plane
+
+Each run reads every sandbox, leftover, tunnel and DNS record, and decides from that state alone:
+
+- A running sandbox that is idle sleeps. Run Command asks the VM for its T3 Code runs, so this takes tens of seconds.
+- A sandbox asleep for 14 days goes down, with its tunnel and DNS records.
+- A leftover older than an hour is deleted, and the NAT gateway and its IP go once no sandbox runs.
+- A sandbox whose VM carries the tag `skybox:keep` stays as it is:
+  `az tag update --operation Merge --resource-id <vm id> --tags skybox:keep=true`.
+
+It starts in dry-run, where it only logs what it would do. To read the latest runs:
+
+```sh
+az monitor log-analytics query -w <workspace id> \
+  --analytics-query 'ContainerAppConsoleLogs_CL | where ContainerJobName_s == "job-skybox-control" | order by TimeGenerated desc | take 50'
+```
+
+To turn enforcement on, set `control_plane_enforce = true` in `envs/prod/prod.auto.tfvars` and apply.
 
 ## Keys
 
@@ -66,3 +91,6 @@ op run --env-file deploy/envs/prod/secrets.env -- deploy/tests/foundation.sh
 3. `deploy/scripts/bootstrap-tfstate.py --deployer <github_actions_principal_id>` lets CI read and lock the state.
 4. Set `AZURE_CLIENT_ID` in `scripts/setup-github.py` to the output `github_actions_client_id`, and run the script.
    It also creates the `prod` environment and pins it to `master`.
+
+The deploy identity may grant only the two Key Vault roles, so a role assignment for any other role, such as the control
+plane's, is applied first from a Mac as an Owner with `-target`, and CI applies the rest.

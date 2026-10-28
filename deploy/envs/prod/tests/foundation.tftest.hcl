@@ -2,6 +2,13 @@ mock_provider "azurerm" {}
 mock_provider "cloudflare" {}
 mock_provider "random" {}
 
+override_data {
+  target = data.azurerm_subscription.current
+  values = {
+    id = "/subscriptions/00000000-0000-0000-0000-000000000000"
+  }
+}
+
 variables {
   cloudflare_zone_id      = "zone"
   cloudflare_api_token    = "cloudflare-token"
@@ -75,5 +82,51 @@ run "only_the_owner_reaches_a_sandbox_hostname" {
   assert {
     condition     = alltrue([for rule in cloudflare_zero_trust_access_policy.sandbox_owner.include : rule.email.email == var.access_email])
     error_message = "The Access policy does not admit the owner's email."
+  }
+}
+
+run "the_control_plane_starts_in_dry_run_every_15_minutes" {
+  command = plan
+
+  assert {
+    condition     = azurerm_container_app_job.control_plane.template[0].container[0].args == tolist(["reconcile"])
+    error_message = "The control plane enforces by default."
+  }
+
+  assert {
+    condition     = azurerm_container_app_job.control_plane.schedule_trigger_config[0].cron_expression == "*/15 * * * *"
+    error_message = "The control plane does not run every 15 minutes."
+  }
+
+  assert {
+    condition     = azurerm_container_app_job.control_plane.replica_timeout_in_seconds < 15 * 60
+    error_message = "A control plane run can outlast the interval and overlap the next."
+  }
+}
+
+run "the_control_plane_enforces_only_when_told" {
+  command = plan
+
+  variables {
+    control_plane_enforce = true
+  }
+
+  assert {
+    condition     = azurerm_container_app_job.control_plane.template[0].container[0].args == tolist(["reconcile", "--enforce"])
+    error_message = "control_plane_enforce does not make the control plane act."
+  }
+}
+
+run "the_control_plane_reads_only_the_cloudflare_token" {
+  command = plan
+
+  assert {
+    condition     = azurerm_role_assignment.control_cloudflare_token_reader.role_definition_name == "Key Vault Secrets User"
+    error_message = "The control plane holds a Key Vault role other than Key Vault Secrets User."
+  }
+
+  assert {
+    condition     = azurerm_role_definition.resource_group_deleter.permissions[0].actions == tolist(["Microsoft.Resources/subscriptions/resourceGroups/delete"])
+    error_message = "The resource group role allows more than deleting a resource group."
   }
 }
