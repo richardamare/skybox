@@ -13,11 +13,13 @@ import (
 	"strings"
 
 	"github.com/richardamare/skybox/internal/cloudflare"
+	"github.com/richardamare/skybox/internal/tailscale"
 )
 
 const (
 	vault          = "skybox"
 	cloudflareItem = "Cloudflare API token"
+	tailscaleItem  = "Tailscale OAuth client"
 )
 
 // ReadError names the 1Password item op could not read.
@@ -39,8 +41,25 @@ func ServiceAccountTokenFile() string {
 
 // Cloudflare reads the API token and the account and zone it works on, all from one item.
 func Cloudflare(ctx context.Context) (cloudflare.Credentials, error) {
+	itemJSON, err := getItem(ctx, cloudflareItem)
+	if err != nil {
+		return cloudflare.Credentials{}, err
+	}
+	return parseCloudflare(itemJSON)
+}
+
+// Tailscale reads the OAuth client that mints sandboxes' auth keys and deletes their devices.
+func Tailscale(ctx context.Context) (tailscale.Credentials, error) {
+	itemJSON, err := getItem(ctx, tailscaleItem)
+	if err != nil {
+		return tailscale.Credentials{}, err
+	}
+	return parseTailscale(itemJSON)
+}
+
+func getItem(ctx context.Context, item string) ([]byte, error) {
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "op", "item", "get", cloudflareItem, "--vault", vault, "--format", "json")
+	cmd := exec.CommandContext(ctx, "op", "item", "get", item, "--vault", vault, "--format", "json")
 	cmd.Env = opEnv(os.Environ(), ServiceAccountTokenFile())
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -49,9 +68,9 @@ func Cloudflare(ctx context.Context) (cloudflare.Credentials, error) {
 		if detail == "" {
 			detail = err.Error()
 		}
-		return cloudflare.Credentials{}, &ReadError{Item: cloudflareItem, Detail: detail}
+		return nil, &ReadError{Item: item, Detail: detail}
 	}
-	return parseCloudflare(out)
+	return out, nil
 }
 
 // opEnv passes op the service account token from tokenFile, unless the environment already names an account.
@@ -69,9 +88,40 @@ func opEnv(environ []string, tokenFile string) []string {
 }
 
 func parseCloudflare(itemJSON []byte) (cloudflare.Credentials, error) {
-	var item struct {
+	v, err := fields(cloudflareItem, itemJSON,
+		field{"", "credential"}, field{"Cloudflare", "account id"}, field{"Cloudflare", "zone id"}, field{"Cloudflare", "zone"})
+	if err != nil {
+		return cloudflare.Credentials{}, err
+	}
+	return cloudflare.Credentials{Token: v[0], AccountID: v[1], ZoneID: v[2], Zone: v[3]}, nil
+}
+
+// parseTailscale reads an API Credential item, whose username is the OAuth client's ID and whose credential is its
+// secret.
+func parseTailscale(itemJSON []byte) (tailscale.Credentials, error) {
+	v, err := fields(tailscaleItem, itemJSON, field{"", "username"}, field{"", "credential"})
+	if err != nil {
+		return tailscale.Credentials{}, err
+	}
+	return tailscale.Credentials{ClientID: v[0], ClientSecret: v[1]}, nil
+}
+
+// field names a field by its section and label, as the 1Password app shows them. An empty section is the top of the
+// item.
+type field struct{ section, label string }
+
+func (f field) String() string {
+	if f.section == "" {
+		return f.label
+	}
+	return f.section + "/" + f.label
+}
+
+// fields returns the values of the wanted fields, in their order, from op's JSON for item. It fails naming the first
+// field that is empty or missing.
+func fields(item string, itemJSON []byte, wanted ...field) ([]string, error) {
+	var parsed struct {
 		Fields []struct {
-			ID      string `json:"id"`
 			Label   string `json:"label"`
 			Value   string `json:"value"`
 			Section *struct {
@@ -79,34 +129,24 @@ func parseCloudflare(itemJSON []byte) (cloudflare.Credentials, error) {
 			} `json:"section"`
 		} `json:"fields"`
 	}
-	if err := json.Unmarshal(itemJSON, &item); err != nil {
-		return cloudflare.Credentials{}, &ReadError{Item: cloudflareItem, Detail: "op printed something that is not an item"}
+	if err := json.Unmarshal(itemJSON, &parsed); err != nil {
+		return nil, &ReadError{Item: item, Detail: "op printed something that is not an item"}
 	}
-	field := func(section, label string) string {
-		for _, f := range item.Fields {
-			s := ""
+	values := make([]string, len(wanted))
+	for i, w := range wanted {
+		for _, f := range parsed.Fields {
+			section := ""
 			if f.Section != nil {
-				s = f.Section.Label
+				section = f.Section.Label
 			}
-			if f.Label == label && s == section {
-				return f.Value
+			if f.Label == w.label && section == w.section {
+				values[i] = f.Value
+				break
 			}
 		}
-		return ""
-	}
-	creds := cloudflare.Credentials{
-		Token:     field("", "credential"),
-		AccountID: field("Cloudflare", "account id"),
-		ZoneID:    field("Cloudflare", "zone id"),
-		Zone:      field("Cloudflare", "zone"),
-	}
-	for name, value := range map[string]string{
-		"credential": creds.Token, "Cloudflare/account id": creds.AccountID,
-		"Cloudflare/zone id": creds.ZoneID, "Cloudflare/zone": creds.Zone,
-	} {
-		if value == "" {
-			return cloudflare.Credentials{}, &ReadError{Item: cloudflareItem, Detail: "the field " + name + " is empty or missing"}
+		if values[i] == "" {
+			return nil, &ReadError{Item: item, Detail: "the field " + w.String() + " is empty or missing"}
 		}
 	}
-	return creds, nil
+	return values, nil
 }

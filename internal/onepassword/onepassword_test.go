@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const item = `{"fields":[
+const cloudflareItemJSON = `{"fields":[
   {"label":"credential","value":"token"},
   {"label":"account id","value":"account","section":{"label":"Cloudflare"}},
   {"label":"zone id","value":"zone-id","section":{"label":"Cloudflare"}},
@@ -17,18 +17,40 @@ const item = `{"fields":[
 ]}`
 
 func TestParseCloudflareReadsEveryField(t *testing.T) {
-	creds, err := parseCloudflare([]byte(item))
+	creds, err := parseCloudflare([]byte(cloudflareItemJSON))
 	if err != nil || creds.Token != "token" || creds.AccountID != "account" || creds.ZoneID != "zone-id" || creds.Zone != "example.com" {
 		t.Fatalf("parseCloudflare = %+v, %v", creds, err)
 	}
 }
 
 func TestParseCloudflareNamesTheItemWhenAFieldIsMissing(t *testing.T) {
-	_, err := parseCloudflare([]byte(strings.Replace(item, `"zone","value":"example.com"`, `"zone","value":""`, 1)))
+	_, err := parseCloudflare([]byte(strings.Replace(cloudflareItemJSON, `"zone","value":"example.com"`, `"zone","value":""`, 1)))
 
 	var readErr *ReadError
 	if !errors.As(err, &readErr) || !strings.Contains(err.Error(), `"Cloudflare API token"`) || !strings.Contains(err.Error(), "Cloudflare/zone") {
 		t.Fatalf("parseCloudflare = %v; want an error naming the item and the field", err)
+	}
+}
+
+const tailscaleItemJSON = `{"fields":[
+  {"id":"username","label":"username","value":"client-id"},
+  {"id":"credential","label":"credential","value":"tskey-client-secret"},
+  {"id":"notesPlain","label":"notesPlain","value":"tailnet richardamare.github"}
+]}`
+
+func TestParseTailscaleReadsTheClientIDAndSecret(t *testing.T) {
+	creds, err := parseTailscale([]byte(tailscaleItemJSON))
+	if err != nil || creds.ClientID != "client-id" || creds.ClientSecret != "tskey-client-secret" {
+		t.Fatalf("parseTailscale = %+v, %v", creds, err)
+	}
+}
+
+func TestParseTailscaleNamesTheItemWhenTheSecretIsMissing(t *testing.T) {
+	_, err := parseTailscale([]byte(strings.Replace(tailscaleItemJSON, `"tskey-client-secret"`, `""`, 1)))
+
+	var readErr *ReadError
+	if !errors.As(err, &readErr) || !strings.Contains(err.Error(), `"Tailscale OAuth client"`) || !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("parseTailscale = %v; want an error naming the item and the field", err)
 	}
 }
 
