@@ -16,6 +16,18 @@ updates:
         patterns: ["@commitlint/*", "lefthook", "oxfmt"]
         update-types: [minor, patch]
 
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Prague
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/*"]
     schedule:
