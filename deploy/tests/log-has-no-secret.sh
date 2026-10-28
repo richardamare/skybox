@@ -15,7 +15,8 @@ secrets_file=${SECRETS_FILE:-deploy/envs/prod/secrets.env}
 job=$(gh api "repos/$repo/actions/runs/$run/attempts/$attempt/jobs" --jq '.jobs[] | select(.name == "'"$job_name"'") | .id')
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
-gh api "repos/$repo/actions/jobs/$job/logs" >"$log"
+# gh api refuses a response with terminal escape sequences, which Terraform writes into its output.
+curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o "$log" "https://api.github.com/repos/$repo/actions/jobs/$job/logs"
 if [[ ! -s $log ]]; then
   echo "FAIL the $job_name job's log is empty, so there is nothing to check"
   exit 1
