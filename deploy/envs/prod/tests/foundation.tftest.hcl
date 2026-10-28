@@ -99,6 +99,11 @@ run "the_control_plane_starts_in_dry_run_every_15_minutes" {
   }
 
   assert {
+    condition     = azurerm_container_app_environment.main.logs_destination == "log-analytics"
+    error_message = "The Container Apps environment does not send the job's logs to Log Analytics."
+  }
+
+  assert {
     condition     = azurerm_container_app_job.control_plane.replica_timeout_in_seconds < 15 * 60
     error_message = "A control plane run can outlast the interval and overlap the next."
   }
