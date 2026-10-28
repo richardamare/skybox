@@ -1,0 +1,3 @@
+# 1Password holds every key, and GitHub Actions reads it through a service account
+
+The `skybox` vault in 1Password is the only place a key is stored. GitHub Actions holds one secret, `OP_SERVICE_ACCOUNT_TOKEN`, and reads every other key through a service account that can read that vault and no other. Terraform writes the keys sandboxes and the control plane need into Key Vault, which they read through managed identities. The CLI on the Mac reads its keys with `op` at runtime and writes none to disk. Azure sign-in uses OIDC, so no Azure secret exists anywhere. Copying each key into GitHub secrets with a script was considered and rejected: every rotation would need the script again, and the keys would live in two places.
