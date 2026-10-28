@@ -3,7 +3,7 @@ import type { UserConfig } from "@commitlint/types"
 const config: UserConfig = {
   extends: ["@commitlint/config-conventional"],
   rules: {
-    "scope-enum": [2, "always", ["azure", "cli", "deps", "deps-dev", "image"]]
+    "scope-enum": [2, "always", ["azure", "cli", "cloudflare", "deps", "deps-dev", "image"]]
   }
 }
 
