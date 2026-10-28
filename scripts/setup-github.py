@@ -3,8 +3,12 @@
 # requires-python = ">=3.13"
 # dependencies = []
 # ///
-"""Create the private GitHub repository if it is missing and apply its settings, labels, security features, admin
-access and the master ruleset. Safe to rerun: every step converges on the state below.
+"""Create the public GitHub repository if it is missing and apply its settings, labels, security features, admin
+access, the outside-contribution limits and the master ruleset. Safe to rerun: every step converges on the state below.
+
+The repository is public but closed to contributions: only collaborators open pull requests, issues and comments, and a
+pull request from a fork runs workflows only after approval. GitHub caps the interaction limit at six months, so rerun
+the script before it lapses.
 
 The person running the script ends up as the only repository admin; every other admin collaborator or team drops to
 maintain.
@@ -22,6 +26,7 @@ REPO = sys.argv[1]
 RULESET_NAME = "master"
 
 SETTINGS = {
+    "private": False,
     "has_wiki": False,
     "has_projects": False,
     "has_discussions": False,
@@ -34,6 +39,7 @@ SETTINGS = {
     "delete_branch_on_merge": True,
     "allow_update_branch": True,
     "web_commit_signoff_required": False,
+    "pull_request_creation_policy": "collaborators_only",
 }
 
 LABELS = {
@@ -94,8 +100,8 @@ def step(title: str) -> None:
 
 def ensure_repository() -> None:
     if run("gh", "repo", "view", REPO, check=False).returncode != 0:
-        step(f"Creating private repository {REPO}")
-        run("gh", "repo", "create", REPO, "--private")
+        step(f"Creating public repository {REPO}")
+        run("gh", "repo", "create", REPO, "--public")
     if run("git", "remote", "get-url", "origin", check=False).returncode != 0:
         run("git", "remote", "add", "origin", f"https://github.com/{REPO}.git")
 
@@ -106,6 +112,12 @@ def apply_settings() -> None:
 
     step("Actions permissions")
     api("PUT", "/actions/permissions/workflow", {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False})
+    api("PUT", "/actions/permissions/fork-pr-contributor-approval", {"approval_policy": "all_external_contributors"})
+
+
+def apply_interaction_limits() -> None:
+    step("Interactions limited to collaborators for six months")
+    api("PUT", "/interaction-limits", {"limit": "collaborators_only", "expiry": "six_months"})
 
 
 def apply_security() -> None:
@@ -175,6 +187,7 @@ def main() -> None:
     try:
         ensure_repository()
         apply_settings()
+        apply_interaction_limits()
         apply_security()
         apply_labels()
         apply_admins()
