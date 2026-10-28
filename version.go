@@ -20,4 +20,3 @@ func parseVersion(data []byte) string {
 	}
 	return manifest.Version
 }
-func  probeFormat( ) {}
