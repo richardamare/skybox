@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +24,9 @@ type sandboxResult struct {
 	SSHAlias string   `json:"sshAlias,omitempty"`
 	Hostname string   `json:"hostname,omitempty"`
 	Previews []string `json:"previews,omitempty"`
+	// TailnetURL is where T3 Code on the Mac links the sandbox. Only up reports it, as it is the one command that
+	// asks Tailscale for the sandbox's device.
+	TailnetURL string `json:"tailnetUrl,omitempty"`
 }
 
 func newSandboxResult(s sandbox.Sandbox) sandboxResult {
@@ -46,27 +49,19 @@ func (r sandboxResult) writeText(w io.Writer) {
 	ports := cloudflare.PreviewPorts
 	fmt.Fprintf(w, "connect with: ssh %s\n", r.SSHAlias)
 	fmt.Fprintf(w, "preview ports %d to %d at: https://<port>-%s\n", ports[0], ports[len(ports)-1], r.Hostname)
+	if r.TailnetURL != "" {
+		fmt.Fprintf(w, "link in T3 Code at: %s\n", r.TailnetURL)
+	}
 }
 
 // waitForTunnel returns once cloudflared on the sandbox holds a connection, which cloud-init starts last.
 func (d deps) waitForTunnel(ctx context.Context, cmd *cobra.Command, cf tunnels, name, tunnelID string) error {
 	progress(cmd, "waiting for %s to connect its tunnel", name)
-	deadline := time.Now().Add(d.tunnelTimeout)
-	for {
-		healthy, err := cf.TunnelHealthy(ctx, tunnelID)
-		if err != nil {
-			return err
-		}
-		if healthy {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%s did not connect its tunnel within %s: it is left as it is, so read its boot log with `az vm boot-diagnostics get-boot-log`, or delete it with skybox down %s", name, d.tunnelTimeout, name)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(d.pollInterval):
-		}
+	err := poll(ctx, d.tunnelTimeout, d.pollInterval, func() (bool, error) {
+		return cf.TunnelHealthy(ctx, tunnelID)
+	})
+	if errors.Is(err, errTimedOut) {
+		return fmt.Errorf("%s did not connect its tunnel within %s: it is left as it is, so read its boot log with `az vm boot-diagnostics get-boot-log`, or delete it with skybox down %s", name, d.tunnelTimeout, name)
 	}
+	return err
 }

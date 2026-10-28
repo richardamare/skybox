@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/richardamare/skybox/internal/cloudflare"
 	"github.com/richardamare/skybox/internal/sandbox"
+	"github.com/richardamare/skybox/internal/tailscale"
 )
 
 // fakeProvider keeps sandboxes in memory and gives each size the machine type the Azure provider uses.
@@ -146,10 +148,70 @@ func (f *fakeTunnels) DeleteTunnel(_ context.Context, id string) error {
 	return nil
 }
 
+// fakeTailnet keeps auth keys and devices in memory. A sandbox whose auth key is live joins the tailnet, spending the
+// key, the first time its devices are listed, unless neverJoins is set.
+type fakeTailnet struct {
+	keys       map[string]tailscale.AuthKey
+	devices    map[string]tailscale.Device
+	mintErr    error
+	neverJoins bool
+	minted     []string
+	revoked    []string
+}
+
+func newFakeTailnet() *fakeTailnet {
+	return &fakeTailnet{keys: map[string]tailscale.AuthKey{}, devices: map[string]tailscale.Device{}}
+}
+
+func (f *fakeTailnet) MintAuthKey(_ context.Context, sandbox string) (tailscale.AuthKey, error) {
+	if f.mintErr != nil {
+		return tailscale.AuthKey{}, f.mintErr
+	}
+	key := tailscale.AuthKey{ID: fmt.Sprintf("k%d", len(f.minted)+1), Key: "tskey-auth-" + sandbox}
+	f.keys[sandbox] = key
+	f.minted = append(f.minted, sandbox)
+	return key, nil
+}
+
+func (f *fakeTailnet) RevokeAuthKey(_ context.Context, id string) error {
+	for sandbox, key := range f.keys {
+		if key.ID == id {
+			delete(f.keys, sandbox)
+		}
+	}
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+func (f *fakeTailnet) Devices(_ context.Context, sandbox string) ([]tailscale.Device, error) {
+	if _, live := f.keys[sandbox]; live && !f.neverJoins {
+		delete(f.keys, sandbox)
+		id := "node-" + sandbox
+		f.devices[id] = tailscale.Device{ID: id, Hostname: sandbox, Name: sandbox + ".tail1234.ts.net", Tags: []string{tailscale.Tag}}
+	}
+	var found []tailscale.Device
+	for _, d := range f.devices {
+		if d.Hostname == sandbox {
+			found = append(found, d)
+		}
+	}
+	return found, nil
+}
+
+func (f *fakeTailnet) DeleteDevices(_ context.Context, sandbox string) error {
+	for id, d := range f.devices {
+		if d.Hostname == sandbox {
+			delete(f.devices, id)
+		}
+	}
+	return nil
+}
+
 // testDeps runs every command against fakes, with ~/.ssh in a temporary directory.
 func testDeps(t *testing.T, p *fakeProvider) deps {
 	t.Helper()
 	cf := newFakeTunnels()
+	ts := newFakeTailnet()
 	home := t.TempDir()
 	return deps{
 		provider: func(context.Context) (sandbox.Provider, error) { return p, nil },
@@ -157,6 +219,7 @@ func testDeps(t *testing.T, p *fakeProvider) deps {
 			return []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake test"}, nil
 		},
 		tunnels: func(context.Context) (tunnels, error) { return cf, nil },
+		tailnet: func(context.Context) (tailnet, error) { return ts, nil },
 		connect: func(string) error {
 			t.Fatal("proxy connected")
 			return nil
@@ -165,6 +228,7 @@ func testDeps(t *testing.T, p *fakeProvider) deps {
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
 		executable:    "/usr/local/bin/skybox",
 		tunnelTimeout: time.Second,
+		joinTimeout:   10 * time.Millisecond,
 		pollInterval:  time.Millisecond,
 	}
 }
@@ -206,4 +270,10 @@ func tunnelsOf(t *testing.T, d deps) *fakeTunnels {
 	t.Helper()
 	cf, _ := d.tunnels(context.Background())
 	return cf.(*fakeTunnels)
+}
+
+func tailnetOf(t *testing.T, d deps) *fakeTailnet {
+	t.Helper()
+	ts, _ := d.tailnet(context.Background())
+	return ts.(*fakeTailnet)
 }

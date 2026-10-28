@@ -20,6 +20,7 @@ import (
 	"github.com/richardamare/skybox/internal/onepassword"
 	"github.com/richardamare/skybox/internal/sandbox"
 	"github.com/richardamare/skybox/internal/sshkeys"
+	"github.com/richardamare/skybox/internal/tailscale"
 )
 
 func main() {
@@ -33,6 +34,7 @@ type deps struct {
 	provider func(ctx context.Context) (sandbox.Provider, error)
 	sshKeys  func(ctx context.Context) ([]string, error)
 	tunnels  func(ctx context.Context) (tunnels, error)
+	tailnet  func(ctx context.Context) (tailnet, error)
 	// connect hands the SSH connection to cloudflared, which carries it through Cloudflare Access.
 	connect func(hostname string) error
 
@@ -42,7 +44,9 @@ type deps struct {
 	executable string
 	// tunnelTimeout bounds how long up and wake wait for the sandbox's tunnel to connect.
 	tunnelTimeout time.Duration
-	pollInterval  time.Duration
+	// joinTimeout bounds how long up waits, once the tunnel is connected, for the sandbox's device on the tailnet.
+	joinTimeout  time.Duration
+	pollInterval time.Duration
 }
 
 // tunnels is the part of Cloudflare a sandbox needs: its tunnel, the DNS records in front of it, and their health.
@@ -80,11 +84,19 @@ func defaultDeps() deps {
 			}
 			return cloudflare.New(creds), nil
 		},
+		tailnet: func(ctx context.Context) (tailnet, error) {
+			creds, err := onepassword.Tailscale(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return tailscale.New(creds), nil
+		},
 		connect:       execCloudflared,
 		sshConfig:     filepath.Join(home, ".ssh", "config"),
 		knownHosts:    filepath.Join(home, ".ssh", "skybox_known_hosts"),
 		executable:    executable,
 		tunnelTimeout: 10 * time.Minute,
+		joinTimeout:   2 * time.Minute,
 		pollInterval:  5 * time.Second,
 	}
 }
@@ -185,4 +197,29 @@ func writeJSON(w io.Writer, v any) {
 
 func progress(cmd *cobra.Command, format string, args ...any) {
 	fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
+}
+
+// errTimedOut is what poll returns when done never reported true before the timeout.
+var errTimedOut = errors.New("timed out")
+
+// poll calls done every interval until it reports true or fails, or until timeout has passed.
+func poll(ctx context.Context, timeout, interval time.Duration, done func() (bool, error)) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		ok, err := done()
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errTimedOut
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
+		}
+	}
 }
