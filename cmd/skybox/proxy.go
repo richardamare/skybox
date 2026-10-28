@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -31,29 +32,39 @@ func (d deps) proxyCommand() *cobra.Command {
 			if alias {
 				name = strings.TrimPrefix(name, sshconfig.Alias(""))
 			}
-			provider, err := d.providerFor(ctx, name)
+			s, err := d.running(ctx, name)
 			if err != nil {
 				return &commandError{err}
-			}
-			s, err := provider.Get(ctx, name)
-			var notFound *sandbox.NotFoundError
-			switch {
-			case errors.As(err, &notFound):
-				return &commandError{fmt.Errorf("no sandbox named %s: create it with skybox up %s", name, name)}
-			case err != nil:
-				return &commandError{err}
-			case s.State == sandbox.Asleep:
-				return &commandError{fmt.Errorf("%s is asleep, run skybox wake %s", name, name)}
-			case s.State != sandbox.Running:
-				return &commandError{fmt.Errorf("%s is %s, and accepts ssh once it is running", name, s.State)}
-			case s.Labels[labelHostname] == "":
-				return &commandError{fmt.Errorf("%s has no tunnel hostname", name)}
 			}
 			return d.connect(s.Labels[labelHostname])
 		},
 	}
 	cmd.Flags().BoolVar(&alias, "alias", false, "the argument is a skybox-<name> alias, as the catch-all ssh block passes it")
 	return cmd
+}
+
+// running returns the sandbox when ssh can reach it, and otherwise says what the user runs first. It never wakes or
+// creates a sandbox.
+func (d deps) running(ctx context.Context, name string) (sandbox.Sandbox, error) {
+	provider, err := d.providerFor(ctx, name)
+	if err != nil {
+		return sandbox.Sandbox{}, err
+	}
+	s, err := provider.Get(ctx, name)
+	var notFound *sandbox.NotFoundError
+	switch {
+	case errors.As(err, &notFound):
+		return sandbox.Sandbox{}, fmt.Errorf("no sandbox named %s: create it with skybox up %s", name, name)
+	case err != nil:
+		return sandbox.Sandbox{}, err
+	case s.State == sandbox.Asleep:
+		return sandbox.Sandbox{}, fmt.Errorf("%s is asleep, run skybox wake %s", name, name)
+	case s.State != sandbox.Running:
+		return sandbox.Sandbox{}, fmt.Errorf("%s is %s, and accepts ssh once it is running", name, s.State)
+	case s.Labels[labelHostname] == "":
+		return sandbox.Sandbox{}, fmt.Errorf("%s has no tunnel hostname", name)
+	}
+	return s, nil
 }
 
 func withToolPath(path string) string {
