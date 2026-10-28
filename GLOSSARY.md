@@ -28,6 +28,10 @@ _Avoid_: Service user, runner
 A sandbox as T3 Code sees it: a T3 Code server the desktop reaches over SSH, listed under Settings → Environments and in Run on once added.
 _Avoid_: Connection, remote, target
 
+**Preview**:
+A web app a sandbox serves on one of ports 3000 to 3009, which the user opens at `https://<port>-<name>-sbx.<zone>` after a Cloudflare Access sign-in.
+_Avoid_: Port forward, public URL, share link
+
 **Size profile**:
 The named amount of compute a sandbox runs on: `light`, `standard` or `large`.
 _Avoid_: Tier, plan, flavour, SKU (except for the provider's VM size)

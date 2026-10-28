@@ -45,14 +45,14 @@ type deps struct {
 	pollInterval  time.Duration
 }
 
-// tunnels is the part of Cloudflare a sandbox needs: its tunnel, the DNS record in front of it, and their health.
+// tunnels is the part of Cloudflare a sandbox needs: its tunnel, the DNS records in front of it, and their health.
 type tunnels interface {
 	Hostname(sandbox string) string
 	CreateTunnel(ctx context.Context, name string) (cloudflare.Tunnel, error)
-	RouteSSH(ctx context.Context, tunnelID, hostname string) error
-	CreateDNSRecord(ctx context.Context, sandbox, hostname, tunnelID string) (string, error)
+	Route(ctx context.Context, tunnelID, hostname string) error
+	CreateDNSRecords(ctx context.Context, sandbox, hostname, tunnelID string) error
 	TunnelHealthy(ctx context.Context, tunnelID string) (bool, error)
-	DeleteDNSRecord(ctx context.Context, recordID string) error
+	DeleteDNSRecords(ctx context.Context, sandbox string) error
 	DeleteTunnel(ctx context.Context, tunnelID string) error
 }
 

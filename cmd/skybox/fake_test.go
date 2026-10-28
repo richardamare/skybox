@@ -89,7 +89,8 @@ func (p *fakeProvider) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
-// fakeTunnels keeps tunnels and DNS records in memory. A tunnel turns healthy after healthyAfter checks.
+// fakeTunnels keeps tunnels and DNS records in memory, each record under its hostname with the sandbox it names.
+// A tunnel turns healthy after healthyAfter checks.
 type fakeTunnels struct {
 	tunnels      map[string]bool
 	records      map[string]string
@@ -113,12 +114,14 @@ func (f *fakeTunnels) CreateTunnel(_ context.Context, name string) (cloudflare.T
 	return cloudflare.Tunnel{ID: id, Token: "token-" + name}, nil
 }
 
-func (f *fakeTunnels) RouteSSH(context.Context, string, string) error { return nil }
+func (f *fakeTunnels) Route(context.Context, string, string) error { return nil }
 
-func (f *fakeTunnels) CreateDNSRecord(_ context.Context, _, hostname, _ string) (string, error) {
-	id := "record-" + hostname
-	f.records[id] = hostname
-	return id, nil
+func (f *fakeTunnels) CreateDNSRecords(_ context.Context, sandbox, hostname, _ string) error {
+	f.records[hostname] = sandbox
+	for _, port := range cloudflare.PreviewPorts {
+		f.records[cloudflare.PreviewHostname(hostname, port)] = sandbox
+	}
+	return nil
 }
 
 func (f *fakeTunnels) TunnelHealthy(_ context.Context, id string) (bool, error) {
@@ -129,8 +132,12 @@ func (f *fakeTunnels) TunnelHealthy(_ context.Context, id string) (bool, error) 
 	return f.checks > f.healthyAfter, nil
 }
 
-func (f *fakeTunnels) DeleteDNSRecord(_ context.Context, id string) error {
-	delete(f.records, id)
+func (f *fakeTunnels) DeleteDNSRecords(_ context.Context, sandbox string) error {
+	for hostname, owner := range f.records {
+		if owner == sandbox {
+			delete(f.records, hostname)
+		}
+	}
 	return nil
 }
 
@@ -166,8 +173,7 @@ func runningSandbox(name string) sandbox.Sandbox {
 	return sandbox.Sandbox{
 		Name: name, Size: sandbox.Standard, MachineType: "Standard_D4as_v7", State: sandbox.Running,
 		Labels: map[string]string{
-			labelTunnelID: "tunnel-skybox-" + name, labelDNSRecord: "record-" + name + "-sbx.example.com",
-			labelHostname: name + "-sbx.example.com",
+			labelTunnelID: "tunnel-skybox-" + name, labelHostname: name + "-sbx.example.com",
 		},
 	}
 }

@@ -13,7 +13,7 @@ import (
 func (d deps) downCommand(asJSON *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "down <name>",
-		Short: "Delete a sandbox, its tunnel, its DNS record and its ssh alias",
+		Short: "Delete a sandbox, its tunnel, its DNS records and its ssh alias",
 		Args:  cobra.ExactArgs(1),
 		RunE: runE(asJSON, func(cmd *cobra.Command, args []string) (result, error) {
 			ctx, name := cmd.Context(), args[0]
@@ -34,10 +34,7 @@ func (d deps) downCommand(asJSON *bool) *cobra.Command {
 				return nil, err
 			}
 			// The VM is gone, so cloudflared holds no connection and Cloudflare lets the tunnel go.
-			var cleanup error
-			if id := doomed.Labels[labelDNSRecord]; id != "" {
-				cleanup = errors.Join(cleanup, cf.DeleteDNSRecord(ctx, id))
-			}
+			cleanup := cf.DeleteDNSRecords(ctx, name)
 			if id := doomed.Labels[labelTunnelID]; id != "" {
 				cleanup = errors.Join(cleanup, cf.DeleteTunnel(ctx, id))
 			}

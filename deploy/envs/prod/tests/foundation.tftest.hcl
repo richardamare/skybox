@@ -63,6 +63,11 @@ run "only_the_owner_reaches_a_sandbox_hostname" {
   }
 
   assert {
+    condition     = endswith("3000-api-fix-sbx.example.com", trimprefix(cloudflare_zero_trust_access_application.sandboxes.domain, "*"))
+    error_message = "The Access application does not cover a sandbox's preview hostnames."
+  }
+
+  assert {
     condition     = cloudflare_zero_trust_access_policy.sandbox_owner.decision == "allow" && length(cloudflare_zero_trust_access_policy.sandbox_owner.include) == 1
     error_message = "The Access policy admits someone besides the owner."
   }
