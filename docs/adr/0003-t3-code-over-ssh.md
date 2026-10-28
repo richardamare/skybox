@@ -11,5 +11,5 @@ A sandbox has no public IP and no open port. Each one runs its own Cloudflare Tu
 ## Consequences
 
 - `skybox proxy` fails at once for a sleeping or missing sandbox and never wakes or creates one. T3 Code reconnects saved environments by itself and gives up on SSH within 10 to 60 seconds, so waking on connect would wake every saved sandbox and still time out.
-- A link from the Mac reaches the sandbox through the desktop's SSH port forward, so agents on the Mac can start new work there only while the desktop runs.
+- A link from the Mac reaches the sandbox over Tailscale, not through the desktop's SSH port forward, so agents on the Mac start work there while the desktop is closed. See [ADR 0006](0006-links-over-tailscale.md).
 - The phone reaches a sandbox only through Remote Control.

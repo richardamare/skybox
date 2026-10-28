@@ -28,6 +28,14 @@ _Avoid_: Service user, runner
 A sandbox as T3 Code sees it: a T3 Code server the desktop reaches over SSH, listed under Settings → Environments and in Run on once added.
 _Avoid_: Connection, remote, target
 
+**Link**:
+A sandbox added under Linked environments in T3 Code on the Mac, reached over the tailnet at `https://<name>.<tailnet>.ts.net`, so agents on the Mac start and delegate work there whether or not the desktop runs.
+_Avoid_: Pairing, linked connection
+
+**Tailnet**:
+The user's Tailscale network. The Mac is on it, and each sandbox joins it tagged `tag:skybox`, reachable from the user's devices on 443 alone and reaching nothing itself.
+_Avoid_: VPN, mesh, overlay
+
 **Preview**:
 A web app a sandbox serves on one of ports 3000 to 3009, which the user opens at `https://<port>-<name>-sbx.<zone>` after a Cloudflare Access sign-in.
 _Avoid_: Port forward, public URL, share link
