@@ -104,6 +104,11 @@ run "the_control_plane_starts_in_dry_run_every_15_minutes" {
   }
 
   assert {
+    condition     = azurerm_container_app_job.control_plane.location == azurerm_container_app_environment.main.location
+    error_message = "The control plane job and its Container Apps environment are in different regions."
+  }
+
+  assert {
     condition     = azurerm_container_app_job.control_plane.replica_timeout_in_seconds < 15 * 60
     error_message = "A control plane run can outlast the interval and overlap the next."
   }
