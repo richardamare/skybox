@@ -21,8 +21,12 @@ The unprivileged Linux user on a sandbox that runs the T3 Code server and every 
 _Avoid_: Service user, runner
 
 **Environment**:
-A sandbox as T3 Code sees it: a server reachable over T3 Connect, listed under Settings → Environments and in Run on once added.
+A sandbox as T3 Code sees it: a T3 Code server the desktop reaches over SSH, listed under Settings → Environments and in Run on once added.
 _Avoid_: Connection, remote, target
+
+**Size profile**:
+The named amount of compute a sandbox runs on: `light`, `standard` or `large`.
+_Avoid_: Tier, plan, flavour, SKU (except for the provider's VM size)
 
 **Sleep**:
 Stopping a sandbox's compute while its disk stays, so it costs only storage until it wakes.
@@ -35,3 +39,7 @@ _Avoid_: Start, resume
 **Down**:
 Deleting a sandbox and everything it holds.
 _Avoid_: Destroy, remove, teardown
+
+**Control plane**:
+The scheduled job that puts idle sandboxes to sleep and deletes stale sandboxes and leftover resources.
+_Avoid_: Reaper, janitor, scheduler
