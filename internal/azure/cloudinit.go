@@ -21,8 +21,11 @@ var cloudInit = template.Must(template.New("cloud-init").Funcs(template.FuncMap{
 }).Parse(cloudInitTemplate))
 
 type cloudInitData struct {
+	// Name is the sandbox's name, which it joins the tailnet under.
+	Name             string
 	SSHKeys          []string
 	TunnelToken      string
+	TailnetAuthKey   string
 	KeyVaultName     string
 	IdentityClientID string
 	T3Version        string

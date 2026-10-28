@@ -33,9 +33,10 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  # Copies the Claude token from Key Vault into the agent account's T3 Code service environment, on every boot so a
-  # rotated token reaches the sandbox when it wakes.
-  - path: /usr/local/sbin/skybox-claude-token
+  # Writes the agent account's T3 Code service environment with the Claude token from Key Vault, on every boot so a
+  # rotated token reaches the sandbox when it wakes. The server listens on loopback and publishes itself to the tailnet
+  # with Tailscale Serve.
+  - path: /usr/local/sbin/skybox-t3-env
     permissions: "0755"
     content: |
       #!/bin/bash
@@ -54,14 +55,14 @@ write_files:
       install -d -o agent -g agent -m 0700 /home/agent/.t3
       umask 077
       next=$(mktemp /home/agent/.t3/.service.env.XXXXXX)
-      printf 'T3CODE_HOST=127.0.0.1\nT3CODE_PORT=3773\nCLAUDE_CODE_OAUTH_TOKEN=%s\n' "$secret" >"$next"
+      printf 'T3CODE_HOST=127.0.0.1\nT3CODE_PORT=3773\nT3CODE_TAILSCALE_SERVE=true\nCLAUDE_CODE_OAUTH_TOKEN=%s\n' "$secret" >"$next"
       chown agent:agent "$next"
       mv "$next" /home/agent/.t3/service.env
 
-  - path: /etc/systemd/system/skybox-claude-token.service
+  - path: /etc/systemd/system/skybox-t3-env.service
     content: |
       [Unit]
-      Description=Copy the Claude token from Key Vault to the agent account
+      Description=Write the agent account's T3 Code service environment
       Wants=network-online.target
       After=network-online.target
       Before=systemd-user-sessions.service
@@ -69,10 +70,31 @@ write_files:
       [Service]
       Type=oneshot
       TimeoutStartSec=180
-      ExecStart=/usr/local/sbin/skybox-claude-token
+      ExecStart=/usr/local/sbin/skybox-t3-env
 
       [Install]
       WantedBy=multi-user.target
+
+  # Readable by root alone. The auth key is single use and expires within minutes, and the join removes it.
+  - path: /var/lib/skybox/tailnet-auth-key
+    permissions: "0600"
+    content: {{ json .TailnetAuthKey }}
+
+  # Joins the tailnet as this sandbox on its first boot, with the tag its auth key carries. The agent account is the
+  # operator, so the T3 Code server may run tailscale serve. tailscaled keeps the node on the disk, and a tagged node's
+  # key never expires, so the sandbox wakes at the same address without joining again.
+  - path: /usr/local/sbin/skybox-join-tailnet
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      trap 'rm -f /var/lib/skybox/tailnet-auth-key' EXIT
+      for _ in $(seq 12); do
+        tailscale up --auth-key=file:/var/lib/skybox/tailnet-auth-key --hostname={{ .Name }} --operator=agent && exit 0
+        sleep 5
+      done
+      echo "could not join the tailnet" >&2
+      exit 1
 
   # Runs as the agent account. The T3 Code server version is pinned, and the T3 Code desktop offers to update it.
   - path: /usr/local/lib/skybox/agent-setup.sh
@@ -96,12 +118,16 @@ write_files:
 
 runcmd:
   - [systemctl, daemon-reload]
-  - [systemctl, enable, --now, skybox-claude-token.service]
+  - [systemctl, enable, --now, skybox-t3-env.service]
+  - [sh, -c, 'curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg']
+  - [sh, -c, 'curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list -o /etc/apt/sources.list.d/tailscale.list']
+  - [sh, -c, 'curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg']
+  - [sh, -c, 'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list']
+  - [sh, -c, 'apt-get update && apt-get install -y tailscale cloudflared']
+  # Before the agent setup, so the T3 Code server is on the tailnet when it first starts.
+  - [/usr/local/sbin/skybox-join-tailnet]
   - [loginctl, enable-linger, agent]
   - [sh, -c, 'for _ in $(seq 60); do [ -S /run/user/$(id -u agent)/bus ] && break; sleep 1; done']
   - [sudo, -iu, agent, /usr/local/lib/skybox/agent-setup.sh]
-  - [sh, -c, 'curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg']
-  - [sh, -c, 'echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" > /etc/apt/sources.list.d/cloudflared.list']
-  - [sh, -c, 'apt-get update && apt-get install -y cloudflared']
   # Last, so a connected tunnel tells skybox up that the sandbox is ready.
   - [systemctl, enable, --now, cloudflared.service]
