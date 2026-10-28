@@ -22,6 +22,7 @@ var cloudInit = template.Must(template.New("cloud-init").Funcs(template.FuncMap{
 
 type cloudInitData struct {
 	SSHKeys          []string
+	TunnelToken      string
 	KeyVaultName     string
 	IdentityClientID string
 	T3Version        string
