@@ -1,0 +1,82 @@
+#cloud-config
+users:
+  - default
+  - name: agent
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+{{- range .SSHKeys }}
+      - {{ json . }}
+{{- end }}
+
+package_update: true
+packages: [git, curl, jq, unzip, tmux, build-essential, ca-certificates, ripgrep]
+
+write_files:
+  # Copies the Claude token from Key Vault into the agent account's T3 Code service environment, on every boot so a
+  # rotated token reaches the sandbox when it wakes.
+  - path: /usr/local/sbin/skybox-claude-token
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      imds="http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net&client_id={{ .IdentityClientID }}"
+      secret=""
+      for _ in $(seq 24); do
+        if access=$(curl -fsS -H Metadata:true "$imds" | jq -er .access_token) &&
+          secret=$(curl -fsS -H "Authorization: Bearer $access" \
+            "https://{{ .KeyVaultName }}.vault.azure.net/secrets/claude-code-oauth-token?api-version=7.4" | jq -er .value); then
+          break
+        fi
+        sleep 5
+      done
+      [[ -n $secret ]] || { echo "could not read claude-code-oauth-token from Key Vault" >&2; exit 1; }
+      install -d -o agent -g agent -m 0700 /home/agent/.t3
+      umask 077
+      next=$(mktemp /home/agent/.t3/.service.env.XXXXXX)
+      printf 'T3CODE_HOST=127.0.0.1\nT3CODE_PORT=3773\nCLAUDE_CODE_OAUTH_TOKEN=%s\n' "$secret" >"$next"
+      chown agent:agent "$next"
+      mv "$next" /home/agent/.t3/service.env
+
+  - path: /etc/systemd/system/skybox-claude-token.service
+    content: |
+      [Unit]
+      Description=Copy the Claude token from Key Vault to the agent account
+      Wants=network-online.target
+      After=network-online.target
+      Before=systemd-user-sessions.service
+
+      [Service]
+      Type=oneshot
+      TimeoutStartSec=180
+      ExecStart=/usr/local/sbin/skybox-claude-token
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Runs as the agent account. The T3 Code server version is pinned, and the T3 Code desktop offers to update it.
+  - path: /usr/local/lib/skybox/agent-setup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      cd "$HOME"
+      curl -fsSL https://claude.ai/install.sh | bash
+      curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION={{ .T3Version }} sh
+      mkdir -p .t3/userdata
+      [[ -e .t3/userdata/settings.json ]] || printf '{"linkedEnvironmentsEnabled":true}\n' >.t3/userdata/settings.json
+      [[ -e .claude.json ]] || printf '{"hasCompletedOnboarding":true}\n' >.claude.json
+      cat >>.profile <<'PROFILE'
+      CLAUDE_CODE_OAUTH_TOKEN=$(sed -n 's/^CLAUDE_CODE_OAUTH_TOKEN=//p' "$HOME/.t3/service.env" 2>/dev/null)
+      export CLAUDE_CODE_OAUTH_TOKEN
+      PROFILE
+      export XDG_RUNTIME_DIR=/run/user/$(id -u)
+      export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+      .local/bin/t3 service install
+
+runcmd:
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, skybox-claude-token.service]
+  - [loginctl, enable-linger, agent]
+  - [sh, -c, 'for _ in $(seq 60); do [ -S /run/user/$(id -u agent)/bus ] && break; sleep 1; done']
+  - [sudo, -iu, agent, /usr/local/lib/skybox/agent-setup.sh]

@@ -20,6 +20,10 @@ _Avoid_: Backend, driver, cloud (for the code)
 The profile a sandbox runs on, `light`, `standard` or `large`, which each provider maps to one of its machine types.
 _Avoid_: Tier, flavor, SKU (except for the provider's machine type)
 
+**Outbound access**:
+The NAT gateway and its public IP that let sandboxes reach the internet. skybox creates them when a sandbox starts and deletes them once no sandbox runs.
+_Avoid_: Egress, NAT (except for the Azure resource)
+
 **Agent account**:
 The unprivileged Linux user on a sandbox that runs the T3 Code server and every agent.
 _Avoid_: Service user, runner
