@@ -65,8 +65,8 @@ func (p *Provider) ensureOutbound(ctx context.Context) error {
 	return p.putSubnet(ctx, subnet.Subnet)
 }
 
-// releaseOutboundIfIdle deletes the NAT gateway and its IP when every sandbox is asleep or failed.
-func (p *Provider) releaseOutboundIfIdle(ctx context.Context) error {
+// ReleaseOutboundIfIdle deletes the NAT gateway and its IP when every sandbox is asleep or failed.
+func (p *Provider) ReleaseOutboundIfIdle(ctx context.Context) error {
 	sandboxes, err := p.List(ctx)
 	if err != nil {
 		return err

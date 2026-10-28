@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v9"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
@@ -57,16 +58,20 @@ const (
 )
 
 type Provider struct {
-	cfg        Config
-	vms        *armcompute.VirtualMachinesClient
-	disks      *armcompute.DisksClient
-	usage      *armcompute.UsageClient
-	nics       *armnetwork.InterfacesClient
-	subnets    *armnetwork.SubnetsClient
-	nats       *armnetwork.NatGatewaysClient
-	publicIPs  *armnetwork.PublicIPAddressesClient
-	vaults     *armkeyvault.VaultsClient
-	identities *armmsi.UserAssignedIdentitiesClient
+	cfg          Config
+	subscription string
+	arm          *arm.Client
+	resources    *armresources.Client
+	groups       *armresources.ResourceGroupsClient
+	vms          *armcompute.VirtualMachinesClient
+	disks        *armcompute.DisksClient
+	usage        *armcompute.UsageClient
+	nics         *armnetwork.InterfacesClient
+	subnets      *armnetwork.SubnetsClient
+	nats         *armnetwork.NatGatewaysClient
+	publicIPs    *armnetwork.PublicIPAddressesClient
+	vaults       *armkeyvault.VaultsClient
+	identities   *armmsi.UserAssignedIdentitiesClient
 }
 
 func New(ctx context.Context, cfg Config, cred azcore.TokenCredential) (*Provider, error) {
@@ -90,17 +95,29 @@ func New(ctx context.Context, cfg Config, cred azcore.TokenCredential) (*Provide
 	if err != nil {
 		return nil, err
 	}
+	resources, err := armresources.NewClientFactory(subscription, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	armClient, err := arm.NewClient("skybox", "v0.0.0", cred, nil)
+	if err != nil {
+		return nil, err
+	}
 	return &Provider{
-		cfg:        cfg,
-		vms:        compute.NewVirtualMachinesClient(),
-		disks:      compute.NewDisksClient(),
-		usage:      compute.NewUsageClient(),
-		nics:       network.NewInterfacesClient(),
-		subnets:    network.NewSubnetsClient(),
-		nats:       network.NewNatGatewaysClient(),
-		publicIPs:  network.NewPublicIPAddressesClient(),
-		vaults:     vaults,
-		identities: identities,
+		cfg:          cfg,
+		subscription: subscription,
+		arm:          armClient,
+		resources:    resources.NewClient(),
+		groups:       resources.NewResourceGroupsClient(),
+		vms:          compute.NewVirtualMachinesClient(),
+		disks:        compute.NewDisksClient(),
+		usage:        compute.NewUsageClient(),
+		nics:         network.NewInterfacesClient(),
+		subnets:      network.NewSubnetsClient(),
+		nats:         network.NewNatGatewaysClient(),
+		publicIPs:    network.NewPublicIPAddressesClient(),
+		vaults:       vaults,
+		identities:   identities,
 	}, nil
 }
 
@@ -404,7 +421,7 @@ func (p *Provider) Sleep(ctx context.Context, name string) error {
 	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
 		return err
 	}
-	return p.releaseOutboundIfIdle(ctx)
+	return p.ReleaseOutboundIfIdle(ctx)
 }
 
 func (p *Provider) Wake(ctx context.Context, name string) error {
@@ -432,7 +449,7 @@ func (p *Provider) Delete(ctx context.Context, name string) error {
 	if err := p.deleteResources(ctx, name); err != nil {
 		return err
 	}
-	return p.releaseOutboundIfIdle(ctx)
+	return p.ReleaseOutboundIfIdle(ctx)
 }
 
 // deleteResources removes the VM, then its NIC and disk, each only if it exists, so it also cleans up a sandbox
