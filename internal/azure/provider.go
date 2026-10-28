@@ -267,8 +267,10 @@ func (p *Provider) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Sandb
 		return sandbox.Sandbox{}, err
 	}
 	userData, err := renderCloudInit(cloudInitData{
+		Name:             spec.Name,
 		SSHKeys:          spec.SSHKeys,
 		TunnelToken:      spec.TunnelToken,
+		TailnetAuthKey:   spec.TailnetAuthKey,
 		KeyVaultName:     vault,
 		IdentityClientID: deref(identity.Properties.ClientID),
 		T3Version:        t3Version,
@@ -328,7 +330,8 @@ func (p *Provider) create(ctx context.Context, spec sandbox.Spec, m machine, ide
 	return p.Get(ctx, spec.Name)
 }
 
-// networkInterface has a private address only. The sandbox is reached through its outbound tunnel.
+// networkInterface has a private address only. The sandbox is reached through connections it opens itself: its
+// Cloudflare tunnel and its tailnet node.
 func networkInterface(location string, tags map[string]*string, subnetID string) armnetwork.Interface {
 	return armnetwork.Interface{
 		Location: to.Ptr(location),

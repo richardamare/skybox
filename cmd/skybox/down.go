@@ -13,7 +13,7 @@ import (
 func (d deps) downCommand(asJSON *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:   "down <name>",
-		Short: "Delete a sandbox, its tunnel, its DNS records and its ssh alias",
+		Short: "Delete a sandbox, its tunnel, its DNS records, its tailnet device and its ssh alias",
 		Args:  cobra.ExactArgs(1),
 		RunE: runE(asJSON, func(cmd *cobra.Command, args []string) (result, error) {
 			ctx, name := cmd.Context(), args[0]
@@ -29,6 +29,10 @@ func (d deps) downCommand(asJSON *bool) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
+			ts, err := d.tailnet(ctx)
+			if err != nil {
+				return nil, err
+			}
 			progress(cmd, "deleting %s", name)
 			if err := provider.Delete(ctx, name); err != nil {
 				return nil, err
@@ -39,6 +43,7 @@ func (d deps) downCommand(asJSON *bool) *cobra.Command {
 				cleanup = errors.Join(cleanup, cf.DeleteTunnel(ctx, id))
 			}
 			cleanup = errors.Join(cleanup,
+				ts.DeleteDevices(ctx, name),
 				sshconfig.Update(d.sshConfig, func(c string) string { return sshconfig.Without(c, name) }),
 				sshconfig.ForgetHost(d.knownHosts, sshconfig.Alias(name)))
 			if cleanup != nil {

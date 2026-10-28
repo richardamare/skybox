@@ -73,9 +73,12 @@ type Spec struct {
 	Name    string
 	Size    Size
 	SSHKeys []string
-	// TunnelToken lets cloudflared on the sandbox run its Cloudflare tunnel. It is the only way in.
+	// TunnelToken lets cloudflared on the sandbox run its Cloudflare tunnel, which carries SSH and previews.
 	TunnelToken string
-	Labels      map[string]string
+	// TailnetAuthKey is the single-use key the sandbox joins the tailnet with on its first boot, so a link from T3
+	// Code reaches its T3 Code server.
+	TailnetAuthKey string
+	Labels         map[string]string
 }
 
 // Provider creates, sleeps, wakes and deletes sandboxes in one cloud. The cloud is the only store of a sandbox's

@@ -1,6 +1,7 @@
 package azure
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,8 +21,10 @@ type cloudConfig struct {
 func render(t *testing.T) (string, cloudConfig) {
 	t.Helper()
 	out, err := renderCloudInit(cloudInitData{
+		Name:             "api-fix",
 		SSHKeys:          []string{"ssh-ed25519 AAAA laptop", `ssh-rsa BBBB "quoted": key`},
 		TunnelToken:      "tunnel-token",
+		TailnetAuthKey:   "tskey-auth-k1-abc",
 		KeyVaultName:     "kv-skybox-prod-abc123",
 		IdentityClientID: "client-id",
 		T3Version:        "1.2.3",
@@ -101,7 +104,7 @@ func TestCloudInitRunsThePinnedT3ServerAsAUserService(t *testing.T) {
 
 func TestCloudInitReadsTheClaudeTokenThroughTheIdentity(t *testing.T) {
 	out, config := render(t)
-	script := file(t, config, "/usr/local/sbin/skybox-claude-token")
+	script := file(t, config, "/usr/local/sbin/skybox-t3-env")
 
 	if !strings.Contains(script, "client_id=client-id") || !strings.Contains(script, "https://kv-skybox-prod-abc123.vault.azure.net/secrets/claude-code-oauth-token") {
 		t.Fatalf("token script does not read Key Vault through the sandbox identity:\n%s", script)
@@ -114,17 +117,68 @@ func TestCloudInitReadsTheClaudeTokenThroughTheIdentity(t *testing.T) {
 	}
 }
 
-func TestOnlyRootReadsTheTunnelToken(t *testing.T) {
+func TestCloudInitPublishesT3CodeWithTailscaleServe(t *testing.T) {
 	_, config := render(t)
-	for _, f := range config.WriteFiles {
-		if f.Path == "/etc/cloudflared/token" {
-			if f.Content != "tunnel-token" || f.Permissions != "0600" {
-				t.Fatalf("tunnel token file = %q with mode %s; want the token, mode 0600", f.Content, f.Permissions)
+	script := file(t, config, "/usr/local/sbin/skybox-t3-env")
+
+	if !strings.Contains(script, `T3CODE_HOST=127.0.0.1\n`) || !strings.Contains(script, `T3CODE_TAILSCALE_SERVE=true\n`) {
+		t.Fatalf("the T3 Code service environment does not keep the server on loopback behind Tailscale Serve:\n%s", script)
+	}
+}
+
+func TestOnlyRootReadsTheKeysTheSandboxBootsWith(t *testing.T) {
+	_, config := render(t)
+	for path, want := range map[string]string{
+		"/etc/cloudflared/token":           "tunnel-token",
+		"/var/lib/skybox/tailnet-auth-key": "tskey-auth-k1-abc",
+	} {
+		found := false
+		for _, f := range config.WriteFiles {
+			if f.Path == path {
+				found = true
+				if f.Content != want || f.Permissions != "0600" {
+					t.Errorf("%s = %q with mode %s; want %q, mode 0600", path, f.Content, f.Permissions, want)
+				}
 			}
-			return
+		}
+		if !found {
+			t.Errorf("cloud-init writes no %s", path)
 		}
 	}
-	t.Fatal("cloud-init writes no tunnel token")
+}
+
+func TestCloudInitJoinsTheTailnetAsTheSandboxAndRemovesTheAuthKey(t *testing.T) {
+	_, config := render(t)
+	script := file(t, config, "/usr/local/sbin/skybox-join-tailnet")
+
+	for _, want := range []string{
+		"tailscale up --auth-key=file:/var/lib/skybox/tailnet-auth-key --hostname=api-fix --operator=agent",
+		"trap 'rm -f /var/lib/skybox/tailnet-auth-key' EXIT",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the join script lacks %q:\n%s", want, script)
+		}
+	}
+}
+
+func TestCloudInitJoinsTheTailnetBeforeTheT3ServerFirstStarts(t *testing.T) {
+	_, config := render(t)
+	install, join, setup := -1, -1, -1
+	for i, command := range config.Runcmd {
+		line := fmt.Sprint(command)
+		switch {
+		case strings.Contains(line, "apt-get install") && strings.Contains(line, "tailscale"):
+			install = i
+		case strings.Contains(line, "/usr/local/sbin/skybox-join-tailnet"):
+			join = i
+		case strings.Contains(line, "agent-setup.sh"):
+			setup = i
+		}
+	}
+	if install < 0 || join <= install || setup <= join {
+		t.Fatalf("runcmd installs tailscale at %d, joins at %d and starts T3 Code at %d; want them in that order:\n%v",
+			install, join, setup, config.Runcmd)
+	}
 }
 
 func TestCloudflaredStartsLastAndReadsTheTokenFile(t *testing.T) {
