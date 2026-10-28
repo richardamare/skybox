@@ -25,7 +25,7 @@ func (d deps) upCommand(asJSON *bool) *cobra.Command {
 	return cmd
 }
 
-// up checks everything it can before it creates anything, and removes the tunnel and DNS record again when the
+// up checks everything it can before it creates anything, and removes the tunnel and DNS records again when the
 // sandbox itself cannot be created.
 func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	ctx := cmd.Context()
@@ -66,22 +66,17 @@ func (d deps) up(cmd *cobra.Command, name, sizeName string) (result, error) {
 	if err != nil {
 		return nil, err
 	}
-	labels := map[string]string{labelTunnelID: tunnel.ID, labelHostname: hostname}
 	release := func(cause error) error {
 		cleanup := context.WithoutCancel(ctx)
-		if id := labels[labelDNSRecord]; id != "" {
-			cause = errors.Join(cause, cf.DeleteDNSRecord(cleanup, id))
-		}
-		return errors.Join(cause, cf.DeleteTunnel(cleanup, tunnel.ID))
+		return errors.Join(cause, cf.DeleteDNSRecords(cleanup, name), cf.DeleteTunnel(cleanup, tunnel.ID))
 	}
-	if err := cf.RouteSSH(ctx, tunnel.ID, hostname); err != nil {
+	if err := cf.Route(ctx, tunnel.ID, hostname); err != nil {
 		return nil, release(err)
 	}
-	recordID, err := cf.CreateDNSRecord(ctx, name, hostname, tunnel.ID)
-	if err != nil {
+	if err := cf.CreateDNSRecords(ctx, name, hostname, tunnel.ID); err != nil {
 		return nil, release(err)
 	}
-	labels[labelDNSRecord] = recordID
+	labels := map[string]string{labelTunnelID: tunnel.ID, labelHostname: hostname}
 
 	progress(cmd, "creating %s (%s)", name, size)
 	created, err := provider.Create(ctx, sandbox.Spec{Name: name, Size: size, SSHKeys: keys, TunnelToken: tunnel.Token, Labels: labels})

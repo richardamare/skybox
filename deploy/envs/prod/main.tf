@@ -167,8 +167,9 @@ resource "cloudflare_zone_setting" "websockets" {
   value      = "on"
 }
 
-# Every sandbox's SSH hostname, <name>-sbx.<zone>, sits behind this one application, so only the owner's Access
-# identity reaches a sandbox's tunnel. The hostnames stay one level below the zone, where Universal SSL covers them.
+# Every sandbox's SSH hostname, <name>-sbx.<zone>, and every preview hostname, <port>-<name>-sbx.<zone>, sit behind
+# this one application, so only the owner's Access identity reaches a sandbox's tunnel. The hostnames stay one level
+# below the zone, where Universal SSL covers them.
 resource "cloudflare_zero_trust_access_policy" "sandbox_owner" {
   account_id       = var.cloudflare_account_id
   name             = "skybox sandbox owner"

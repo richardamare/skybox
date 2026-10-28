@@ -29,8 +29,33 @@ func TestUpReportsTheSSHAliasAndWritesIt(t *testing.T) {
 		t.Fatalf("~/.ssh/config = %q, %v; want the alias with skybox proxy", config, err)
 	}
 	spec := p.created[0]
-	if spec.TunnelToken != "token-skybox-api-fix" || spec.Labels[labelTunnelID] == "" || spec.Labels[labelDNSRecord] == "" {
-		t.Fatalf("spec = %+v; want the tunnel token and the Cloudflare ids", spec)
+	if spec.TunnelToken != "token-skybox-api-fix" || spec.Labels[labelTunnelID] != "tunnel-skybox-api-fix" || spec.Labels[labelHostname] != "api-fix-sbx.example.com" {
+		t.Fatalf("spec = %+v; want the tunnel token, the tunnel id and the hostname", spec)
+	}
+}
+
+func TestUpGivesEveryPreviewPortADNSRecord(t *testing.T) {
+	d := testDeps(t, newFakeProvider())
+	cf := tunnelsOf(t, d)
+	got := runCLI(t, d, "up", "api-fix", "--json")
+
+	var doc sandboxResult
+	decodeOne(t, got.stdout, &doc)
+	if got.code != 0 || len(doc.Previews) != len(cloudflare.PreviewPorts) || doc.Previews[0] != "https://3000-api-fix-sbx.example.com" {
+		t.Fatalf("up --json = %d, previews %v; want https://3000-api-fix-sbx.example.com first", got.code, doc.Previews)
+	}
+	for _, port := range cloudflare.PreviewPorts {
+		if host := cloudflare.PreviewHostname("api-fix-sbx.example.com", port); cf.records[host] != "api-fix" {
+			t.Errorf("no DNS record for %s", host)
+		}
+	}
+}
+
+func TestUpPrintsWhereThePreviewsAre(t *testing.T) {
+	got := runCLI(t, testDeps(t, newFakeProvider()), "up", "api-fix")
+
+	if got.code != 0 || !strings.Contains(got.stdout, "preview ports 3000 to 3009 at: https://<port>-api-fix-sbx.example.com\n") {
+		t.Fatalf("up = %d, stdout %q; want the preview hostname pattern", got.code, got.stdout)
 	}
 }
 
@@ -110,12 +135,15 @@ func TestUpNamesThe1PasswordItemOpCannotRead(t *testing.T) {
 	}
 }
 
-func TestDownRemovesTheTunnelTheRecordAndTheAlias(t *testing.T) {
+func TestDownRemovesTheTunnelTheRecordsAndTheAlias(t *testing.T) {
 	p := newFakeProvider()
 	d := testDeps(t, p)
 	cf := tunnelsOf(t, d)
 	if got := runCLI(t, d, "up", "api-fix"); got.code != 0 {
 		t.Fatalf("up = %d, %s", got.code, got.stderr)
+	}
+	if got := runCLI(t, d, "up", "web"); got.code != 0 {
+		t.Fatalf("up web = %d, %s", got.code, got.stderr)
 	}
 	if err := os.WriteFile(d.knownHosts, []byte("skybox-api-fix ssh-ed25519 AAAA\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -126,8 +154,16 @@ func TestDownRemovesTheTunnelTheRecordAndTheAlias(t *testing.T) {
 	if !strings.Contains(string(config), "Host skybox-*") {
 		t.Error("down removed the catch-all, which no sandbox owns")
 	}
+	for host, owner := range cf.records {
+		if owner != "web" {
+			t.Errorf("down api-fix left %s, which belongs to %s", host, owner)
+		}
+	}
+	if len(cf.records) != 1+len(cloudflare.PreviewPorts) {
+		t.Errorf("down api-fix left %d records of web; want all %d", len(cf.records), 1+len(cloudflare.PreviewPorts))
+	}
 	known, _ := os.ReadFile(d.knownHosts)
-	if got.code != 0 || len(cf.tunnels) != 0 || len(cf.records) != 0 || strings.Contains(string(config), "skybox-api-fix") || len(known) != 0 {
+	if got.code != 0 || len(cf.tunnels) != 1 || strings.Contains(string(config), "skybox-api-fix") || len(known) != 0 {
 		t.Fatalf("down = %d, tunnels %v, records %v, config %q, known_hosts %q", got.code, cf.tunnels, cf.records, config, known)
 	}
 }

@@ -1,4 +1,5 @@
-// Package cloudflare creates and deletes the tunnel and DNS record that make a sandbox reachable over SSH.
+// Package cloudflare creates and deletes the tunnel and DNS records that make a sandbox reachable over SSH and its
+// dev servers reachable as previews.
 package cloudflare
 
 import (
@@ -9,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -31,9 +34,18 @@ func New(creds Credentials) *Client {
 }
 
 // Hostname is the sandbox's SSH hostname. It sits one level below the zone, where the zone's Universal SSL
-// certificate covers it, and ends in -sbx, so one Access application covers every sandbox.
+// certificate covers it, and ends in -sbx, so one Access application covers every sandbox and its previews.
 func (c *Client) Hostname(sandbox string) string {
 	return sandbox + "-sbx." + c.creds.Zone
+}
+
+// PreviewPorts are the ports on a sandbox that a browser reaches as previews.
+var PreviewPorts = []int{3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009}
+
+// PreviewHostname is where a browser reaches port on the sandbox whose SSH hostname is hostname. A sandbox name
+// starts with a letter, so the port in front never makes it another sandbox's hostname.
+func PreviewHostname(hostname string, port int) string {
+	return strconv.Itoa(port) + "-" + hostname
 }
 
 // PermissionError reports a call the API token is not allowed to make, with the permission it lacks.
@@ -67,33 +79,62 @@ func (c *Client) CreateTunnel(ctx context.Context, name string) (Tunnel, error) 
 	return Tunnel{ID: created.ID, Token: token}, nil
 }
 
-// RouteSSH sends the hostname to the sandbox's sshd and answers every other request with 404.
-func (c *Client) RouteSSH(ctx context.Context, tunnelID, hostname string) error {
-	config := map[string]any{"config": map[string]any{"ingress": []map[string]string{
-		{"hostname": hostname, "service": "ssh://localhost:22"},
-		{"service": "http_status:404"},
-	}}}
+// Route sends the SSH hostname to the sandbox's sshd and each preview hostname to its port on the sandbox's own
+// localhost. Every other request gets 404, so a request never reaches a port outside PreviewPorts.
+func (c *Client) Route(ctx context.Context, tunnelID, hostname string) error {
+	ingress := []map[string]string{{"hostname": hostname, "service": "ssh://localhost:22"}}
+	for _, port := range PreviewPorts {
+		ingress = append(ingress, map[string]string{
+			"hostname": PreviewHostname(hostname, port),
+			"service":  "http://localhost:" + strconv.Itoa(port),
+		})
+	}
+	ingress = append(ingress, map[string]string{"service": "http_status:404"})
+	config := map[string]any{"config": map[string]any{"ingress": ingress}}
 	return c.call(ctx, http.MethodPut, c.account("/cfd_tunnel/"+tunnelID+"/configurations"), config, nil)
 }
 
-// CreateDNSRecord points hostname at the tunnel. The comment names the sandbox, so a record left behind can be
-// traced to it.
-func (c *Client) CreateDNSRecord(ctx context.Context, sandbox, hostname, tunnelID string) (string, error) {
-	var record struct {
+// CreateDNSRecords points the SSH hostname and every preview hostname at the tunnel, all or none. Each record's
+// comment names the sandbox, so DeleteDNSRecords finds them, and a record left behind can be traced to it.
+func (c *Client) CreateDNSRecords(ctx context.Context, sandbox, hostname, tunnelID string) error {
+	names := []string{hostname}
+	for _, port := range PreviewPorts {
+		names = append(names, PreviewHostname(hostname, port))
+	}
+	posts := make([]map[string]any, len(names))
+	for i, name := range names {
+		posts[i] = map[string]any{
+			"type":    "CNAME",
+			"name":    name,
+			"content": tunnelID + ".cfargotunnel.com",
+			"proxied": true,
+			"comment": recordComment(sandbox),
+		}
+	}
+	err := c.call(ctx, http.MethodPost, c.zone("/dns_records/batch"), map[string]any{"posts": posts}, nil)
+	return withPermission(err, "create a DNS record", "Zone › DNS › Edit")
+}
+
+// DeleteDNSRecords deletes every record whose comment names the sandbox.
+func (c *Client) DeleteDNSRecords(ctx context.Context, sandbox string) error {
+	query := url.Values{"comment.exact": {recordComment(sandbox)}, "per_page": {"1000"}}
+	var records []struct {
 		ID string `json:"id"`
 	}
-	err := c.call(ctx, http.MethodPost, c.zone("/dns_records"), map[string]any{
-		"type":    "CNAME",
-		"name":    hostname,
-		"content": tunnelID + ".cfargotunnel.com",
-		"proxied": true,
-		"comment": "skybox:sandbox=" + sandbox,
-	}, &record)
-	if err != nil {
-		return "", withPermission(err, "create a DNS record", "Zone › DNS › Edit")
+	if err := c.call(ctx, http.MethodGet, c.zone("/dns_records?"+query.Encode()), nil, &records); err != nil {
+		return err
 	}
-	return record.ID, nil
+	if len(records) == 0 {
+		return nil
+	}
+	deletes := make([]map[string]string, len(records))
+	for i, r := range records {
+		deletes[i] = map[string]string{"id": r.ID}
+	}
+	return c.call(ctx, http.MethodPost, c.zone("/dns_records/batch"), map[string]any{"deletes": deletes}, nil)
 }
+
+func recordComment(sandbox string) string { return "skybox:sandbox=" + sandbox }
 
 // TunnelHealthy reports whether cloudflared on the sandbox holds connections to Cloudflare.
 func (c *Client) TunnelHealthy(ctx context.Context, tunnelID string) (bool, error) {
@@ -104,10 +145,6 @@ func (c *Client) TunnelHealthy(ctx context.Context, tunnelID string) (bool, erro
 		return false, err
 	}
 	return tunnel.Status == "healthy", nil
-}
-
-func (c *Client) DeleteDNSRecord(ctx context.Context, recordID string) error {
-	return ignoreNotFound(c.call(ctx, http.MethodDelete, c.zone("/dns_records/"+recordID), nil, nil))
 }
 
 // DeleteTunnel drops the tunnel's connections first, since Cloudflare refuses to delete a tunnel that has any.
