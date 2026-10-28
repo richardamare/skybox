@@ -8,6 +8,10 @@ Provisions cloud machines where coding agents work, and links each one to T3 Cod
 One cloud machine skybox provisions for agent work, with its own disk, its agent account and a T3 Code server.
 _Avoid_: Box, VM, instance (except for the cloud resource itself)
 
+**Foundation**:
+The shared resources every sandbox relies on, such as the network, the Key Vault and the identities, deployed once by Terraform from `deploy/`.
+_Avoid_: Platform, infrastructure, base
+
 **Provider**:
 The cloud a sandbox runs in, together with the code that creates, sleeps, wakes and deletes it there.
 _Avoid_: Backend, driver, cloud (for the code)
